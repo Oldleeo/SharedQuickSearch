@@ -1,0 +1,17 @@
+bin/
+obj/
+publish/
+installer/
+*.user
+.vs/
+.dotnet-cli/
+.nuget_packages/
+TestResults/
+*.zip
+*.log
+settings.json
+file-index*.json
+index-journal.jsonl
+*.sqt
+*.none
+artifacts/

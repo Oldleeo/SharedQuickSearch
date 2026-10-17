@@ -1,0 +1,32 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '*.md', 'LICENSE']
+  pull_request:
+    paths-ignore: ['docs/**', '*.md', 'LICENSE']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build, test and package
+        shell: pwsh
+        run: ./build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SharedQuickSearch-Windows
+          path: |
+            installer/SharedQuickSearch-Setup.exe
+            installer/SharedQuickSearch-Portable.exe
+            installer/SHA256SUMS.txt
+          retention-days: 7

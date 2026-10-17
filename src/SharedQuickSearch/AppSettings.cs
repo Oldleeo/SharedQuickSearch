@@ -1,0 +1,86 @@
+using System.IO;
+using System.Text.Json;
+
+namespace SharedQuickSearch;
+
+public sealed class AppSettings
+{
+    public List<string> IndexRoots { get; set; } = new();
+    public List<string> ExcludedPaths { get; set; } = new();
+    public int ResultLimit { get; set; } = 500;
+    public double WindowWidth { get; set; } = 1380;
+    public double WindowHeight { get; set; } = 820;
+    public double PreviewWidth { get; set; } = 390;
+    public bool AutoStart { get; set; }
+    public string GlobalHotkey { get; set; } = "Ctrl+Alt+Space";
+    public string ResultView { get; set; } = "LargeIcons";
+    public string SortMode { get; set; } = "Relevance";
+    public bool MinimizeToTray { get; set; } = true;
+    public string Theme { get; set; } = "System";
+    public bool PreviewVisible { get; set; } = true;
+    public int UiRevision { get; set; }
+    public bool ThumbnailPrefetch { get; set; } = true;
+    public int ThumbnailCacheLimitMb { get; set; } = 2048;
+    /// <summary>"Spotlight"：快捷键/打开软件只出现搜索条；"Window"：直接打开完整窗口。</summary>
+    public string LaunchMode { get; set; } = "Spotlight";
+    /// <summary>呼出时如果剪贴板里是一个 SKU，自动填进搜索框。只在本机读取，不上传。</summary>
+    public bool ClipboardPrefill { get; set; } = true;
+    public List<string> RecentQueries { get; set; } = new();
+    public List<string> RecentFiles { get; set; } = new();
+    /// <summary>首次引导（添加共享盘目录、排除文件夹、选项）是否完成。</summary>
+    public bool OnboardingDone { get; set; }
+
+    public AppSettings Clone() => new()
+    {
+        IndexRoots = IndexRoots.ToList(),
+        ExcludedPaths = ExcludedPaths.ToList(),
+        ResultLimit = ResultLimit,
+        WindowWidth = WindowWidth,
+        WindowHeight = WindowHeight,
+        PreviewWidth = PreviewWidth,
+        AutoStart = AutoStart,
+        GlobalHotkey = GlobalHotkey,
+        ResultView = ResultView,
+        SortMode = SortMode,
+        MinimizeToTray = MinimizeToTray,
+        Theme = Theme,
+        PreviewVisible = PreviewVisible,
+        UiRevision = UiRevision,
+        ThumbnailPrefetch = ThumbnailPrefetch,
+        ThumbnailCacheLimitMb = ThumbnailCacheLimitMb,
+        LaunchMode = LaunchMode,
+        ClipboardPrefill = ClipboardPrefill,
+        RecentQueries = RecentQueries.ToList(),
+        RecentFiles = RecentFiles.ToList(),
+        OnboardingDone = OnboardingDone
+    };
+}
+
+public static class SettingsStore
+{
+    public static readonly string DataFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Oldlee", "共享速搜");
+    private static readonly string SettingsPath = Path.Combine(DataFolder, "settings.json");
+
+    public static AppSettings Load()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath)) return new AppSettings();
+            var value = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new AppSettings();
+            value.IndexRoots = PathRules.NormalizeDistinct(value.IndexRoots).ToList();
+            value.ExcludedPaths = PathRules.NormalizeDistinct(value.ExcludedPaths).ToList();
+            return value;
+        }
+        catch { return new AppSettings(); }
+    }
+
+    public static void Save(AppSettings settings)
+    {
+        Directory.CreateDirectory(DataFolder);
+        var normalized = settings.Clone();
+        normalized.IndexRoots = PathRules.NormalizeDistinct(settings.IndexRoots).ToList();
+        normalized.ExcludedPaths = PathRules.NormalizeDistinct(settings.ExcludedPaths).ToList();
+        File.WriteAllText(SettingsPath, JsonSerializer.Serialize(normalized, new JsonSerializerOptions { WriteIndented = true }));
+    }
+}

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 跨平台的后端测试：只编译不依赖 WPF 的源文件，Linux / Windows 都能跑。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SharedQuickSearch.CoreTests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\SharedQuickSearch\AppSettings.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\PathRules.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\NaturalStringComparer.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\Models.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\QueryParser.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\Pinyin.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\FileIndexService.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\IndexMonitorService.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\EmbeddedThumbnailLocator.cs" />
+    <EmbeddedResource Include="..\..\src\SharedQuickSearch\Assets\pinyin.dat" LogicalName="pinyin.dat" />
+  </ItemGroup>
+</Project>

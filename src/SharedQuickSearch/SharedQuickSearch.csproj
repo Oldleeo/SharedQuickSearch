@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>共享速搜</AssemblyName>
+    <RootNamespace>SharedQuickSearch</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\共享速搜.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Version>1.8.0</Version>
+    <AssemblyTitle>共享速搜</AssemblyTitle>
+    <Product>共享速搜</Product>
+    <Company>@老李Oldlee</Company>
+    <Copyright>Copyright © @老李Oldlee 2026</Copyright>
+    <Description>共享盘素材极速索引、搜索与预览工具</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- WinForms 只用于托盘和文件夹选择框，避免它的类型与 WPF 同名类型冲突。 -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\pinyin.dat" LogicalName="pinyin.dat" />
+    <Resource Include="Assets\共享速搜.ico" />
+    <Resource Include="Assets\共享速搜-icon.png" />
+    <Resource Include="Assets\老李Oldlee-头像.png" />
+  </ItemGroup>
+</Project>

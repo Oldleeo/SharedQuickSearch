@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>共享速搜 · 共享盘素材秒搜</title>
+<meta name="description" content="给设计部用的 Windows 共享盘搜索工具。按快捷键输入 SKU、文件名或拼音首字母，缩略图马上出来，拖出去就是复制一份，原文件永远不动。免费开源。">
+<meta name="theme-color" content="#F4F5F7">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta property="og:title" content="共享速搜 · 共享盘素材秒搜">
+<meta property="og:description" content="按快捷键，输 SKU 或拼音首字母，缩略图马上出来，拖出去就是复制。Windows 免费开源。">
+<meta property="og:image" content="https://oldleeo.github.io/SharedQuickSearch/assets/og.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<a class="skip" href="#main">跳到正文</a>
+
+<header class="top" id="top">
+  <div class="top-inner">
+    <a class="brand" href="#top" aria-label="共享速搜 首页">
+      <img src="assets/icon-256.png" alt="" width="28" height="28">
+      <span>共享速搜</span>
+    </a>
+    <nav class="nav" aria-label="页面导航">
+      <a href="#why">为什么做它</a>
+      <a href="#features">功能</a>
+      <a href="#start">上手</a>
+      <a href="#faq">常见问题</a>
+      <a href="https://github.com/oldleeo/SharedQuickSearch" class="nav-github" data-repo-link>GitHub</a>
+    </nav>
+    <a class="btn btn-small" href="#download">下载</a>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ============ 首屏：一句话 + 能直接用的演示 ============ -->
+<section class="hero">
+  <div class="hero-copy">
+    <h1>共享盘里的素材，<br>输入就找到。</h1>
+    <p class="lead">给设计部用的共享盘搜索工具。按一下快捷键，输 SKU、文件名或拼音首字母，缩略图马上出来，拖出去就是复制一份。</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/oldleeo/SharedQuickSearch/releases/latest/download/SharedQuickSearch-Setup.exe" data-download>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m0 0-3.5-3.5M10 12l3.5-3.5M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        下载 Windows 版
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/oldleeo/SharedQuickSearch" data-repo-link>查看源码</a>
+    </div>
+    <p class="meta"><span data-version>最新版</span><span>Windows 10 / 11，64 位</span><span>不需要管理员权限</span><span>免费开源</span></p>
+  </div>
+
+  <div class="stage" id="demo-stage">
+    <div class="stage-hint" aria-hidden="true">
+      <span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd kbd-wide">Space</span>
+      <span>在任何地方呼出（网页里按 <span class="kbd">/</span>）</span>
+    </div>
+
+    <div class="spot" id="spot" data-state="collapsed">
+      <div class="spot-bar">
+        <svg class="spot-glass" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m13 13 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="spot-input" type="text" autocomplete="off" spellcheck="false" placeholder="搜索 SKU、文件名或拼音首字母" aria-label="演示：搜索示例文件" aria-controls="spot-grid">
+        <span class="spot-stats" id="spot-stats" aria-live="polite"></span>
+      </div>
+      <div class="spot-body">
+        <div class="spot-body-inner">
+          <div class="spot-chips">
+            <div class="chips" id="spot-cats" role="tablist" aria-label="分类"></div>
+            <div class="tokens" id="spot-tokens"></div>
+          </div>
+          <div class="spot-grid-wrap">
+            <div class="spot-grid" id="spot-grid" role="listbox" aria-label="搜索结果"></div>
+            <div class="spot-empty" id="spot-empty" hidden>
+              <strong id="spot-empty-title">没有找到</strong>
+              <span>试试只输入 SKU 主体，或用拼音首字母，比如 bdt = 白底图</span>
+            </div>
+          </div>
+          <div class="spot-foot">
+            <div class="foot-file" id="foot-file">
+              <span class="foot-thumb" id="foot-thumb"></span>
+              <span class="foot-text"><b id="foot-name"></b><small id="foot-path"></small></span>
+            </div>
+            <div class="foot-hints" id="foot-hints">
+              <span><span class="kbd">拖出</span>复制到任意位置</span>
+              <span><span class="kbd">空格</span>预览</span>
+              <span><span class="kbd">↵</span>所在位置</span>
+              <span><span class="kbd">双击</span>打开</span>
+            </div>
+            <div class="foot-toast" id="foot-toast" role="status"></div>
+          </div>
+        </div>
+
+        <!-- 空格预览 -->
+        <div class="look" id="look" hidden>
+          <div class="look-canvas" id="look-canvas"><img id="look-img" alt=""></div>
+          <div class="look-chrome">
+            <div><b id="look-name"></b><small id="look-meta"></small></div>
+            <span class="kbd look-zoom" id="look-zoom">适应</span>
+            <div class="look-hints"><span><span class="kbd">滚轮</span>缩放</span><span><span class="kbd">← →</span>切换</span><span><span class="kbd">空格</span>关闭</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="try">
+      <span>试试输入</span>
+      <button type="button" data-try="14-5">14-5</button>
+      <button type="button" data-try="bdt">bdt</button>
+      <button type="button" data-try="psd 本周">psd 本周</button>
+      <button type="button" data-try="主图 >100mb">主图 &gt;100mb</button>
+      <button type="button" data-try="ms0318 -旧版">ms0318 -旧版</button>
+    </div>
+    <p class="stage-note">这是网页里的演示，用的是 30 个示例文件。真实软件搜的是你的共享盘，20 万个文件也是同样的速度。</p>
+  </div>
+</section>
+
+<!-- ============ 为什么做它 ============ -->
+<section class="why" id="why">
+  <div class="wrap">
+    <h2>找一张图，本来不该这么难</h2>
+    <p class="section-lead">设计部的共享盘，几万到几十万个文件很常见。下面这些事每天都在发生，共享速搜就是冲着它们做的。</p>
+    <div class="compare" role="table" aria-label="以前和现在的对比">
+      <div class="compare-head" role="row"><span role="columnheader">以前</span><span role="columnheader">用共享速搜</span></div>
+      <div class="compare-row" role="row">
+        <p role="cell">在资源管理器里搜共享盘，转圈几分钟，还经常搜不全。</p>
+        <p role="cell">搜的是本机建好的索引，不再翻共享盘。20 万个文件，输入后几十毫秒出结果。</p>
+      </div>
+      <div class="compare-row" role="row">
+        <p role="cell">同一个款，有人写 14-5，有人写 14_5、SKU145，搜一种写法漏掉另外两种。</p>
+        <p role="cell">空格、横线、下划线、点都忽略。14-5、14_5、145 找到的是同一批文件。</p>
+      </div>
+      <div class="compare-row" role="row">
+        <p role="cell">中文文件名要切输入法才能搜，打错一个字就没了。</p>
+        <p role="cell">拼音和首字母都能搜：bdt 就是“白底图”，zt 就是“主图”，xqy 就是“详情页”。</p>
+      </div>
+      <div class="compare-row" role="row">
+        <p role="cell">缩略图一张张慢慢冒出来，PSD 要等更久，翻一页等半天。</p>
+        <p role="cell">看过的图存在本机，下次 0 毫秒出现。PSD 只读文件开头存的预览图，80 MB 的文件只读约 1 KB 有效数据。</p>
+      </div>
+      <div class="compare-row" role="row">
+        <p role="cell">拖文件时手一抖，把共享盘上的原文件拖走了，全组找了一下午。</p>
+        <p role="cell">从共享速搜拖出去只能是复制。按着 Shift 也变不成移动，原文件永远留在原地。</p>
+      </div>
+      <div class="compare-row" role="row">
+        <p role="cell">找到文件名还不够，还得一层层点进文件夹，才能把文件拿出来用。</p>
+        <p role="cell">回车直接打开所在位置，双击打开文件，Ctrl+Shift+C 复制文件，到哪里都能粘贴。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 功能 ============ -->
+<section class="features" id="features">
+  <div class="wrap">
+    <h2>每个细节都是为了少等一秒</h2>
+    <p class="section-lead">下面是它具体怎么做的，包括数字和做不到的地方。</p>
+  </div>
+
+  <!-- 搜索 -->
+  <article class="feature" id="f-search">
+    <div class="feature-text">
+      <h3>搜索：随手写，也能找到</h3>
+      <p>第一次打开时扫描一遍共享盘，把文件名、大小、修改时间存成本机索引。之后每次搜索都只查这份索引，共享盘在不在线都能搜。</p>
+      <ul class="facts">
+        <li><b>SKU 容错</b>空格、横线、下划线、点都忽略，14-5 = 14_5 = 145。</li>
+        <li><b>拼音</b>全拼和首字母都行，多音字只认一个常用读音。</li>
+        <li><b>逐字筛选</b>后一个字只在上一次的结果里找，打字时通常 0–3 毫秒。</li>
+        <li><b>分类计数</b>图片、PSD·AI、文档、视频、文件夹，各有多少一眼看到。</li>
+      </ul>
+      <p class="numbers"><span><b>5–27 ms</b>搜“14-5”</span><span><b>40–130 ms</b>搜“bdt”，约 2 万条命中</span><span><b>20 万</b>个文件，2 核测试机</span></p>
+    </div>
+    <div class="feature-visual">
+      <table class="syntax">
+        <caption>搜索框里可以直接写条件，识别出来会变成蓝色胶囊，点 × 去掉</caption>
+        <thead><tr><th scope="col">写法</th><th scope="col">意思</th></tr></thead>
+        <tbody>
+          <tr><td><code>psd</code> <code>.jpg</code> <code>*.ai</code></td><td>按格式，可以写好几个</td></tr>
+          <tr><td><code>图片</code> <code>设计稿</code> <code>视频</code></td><td>按分类</td></tr>
+          <tr><td><code>&gt;50mb</code> <code>&lt;1mb</code> <code>&gt;500k</code></td><td>按大小，不写单位按 MB</td></tr>
+          <tr><td><code>今天</code> <code>本周</code> <code>7天</code> <code>30d</code></td><td>按修改时间</td></tr>
+          <tr><td><code>-旧版</code></td><td>排除名字里有“旧版”的</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <!-- 缩略图 -->
+  <article class="feature feature-flip" id="f-thumbs">
+    <div class="feature-text">
+      <h3>缩略图：看过的，下次不再等</h3>
+      <p>每张缩略图按下面的顺序一层层找，找到就停。越往上越快，前三层完全不读文件内容。</p>
+      <ul class="facts">
+        <li><b>本机缓存</b>生成过的都存在本机，默认上限 2 GB，满了删最久没看的。</li>
+        <li><b>后台预热</b>电脑空闲时提前生成，你一开始翻就自动暂停，不抢带宽。</li>
+        <li><b>先糊后清</b>JPG 先显示文件里自带的小图，后台换成清晰版，自动替换。</li>
+        <li><b>自动转正</b>手机和相机拍的照片按方向信息转正。</li>
+      </ul>
+      <p class="caveat">第一次见到、又没有内嵌预览的大文件（没存缩略图的 PSD、大 TIFF、视频）还是要从共享盘读，速度取决于网络和 NAS。</p>
+    </div>
+    <div class="feature-visual">
+      <ol class="layers" aria-label="缩略图查找顺序">
+        <li style="--w: 4%"><span class="layer-name">内存里最近的 360 张</span><span class="layer-time">0 ms</span><span class="layer-net">不读共享盘</span></li>
+        <li style="--w: 10%"><span class="layer-name">本机磁盘缓存</span><span class="layer-time">1–3 ms</span><span class="layer-net">不读共享盘</span></li>
+        <li style="--w: 22%"><span class="layer-name">Windows 缩略图缓存</span><span class="layer-time">几 ms</span><span class="layer-net">只解析路径</span></li>
+        <li style="--w: 48%"><span class="layer-name">文件头里的预览图（PSD、JPG、AI、PDF）</span><span class="layer-time">一次网络往返</span><span class="layer-net">只读文件开头</span></li>
+        <li style="--w: 100%"><span class="layer-name">完整生成</span><span class="layer-time">看文件大小</span><span class="layer-net">读整个文件</span></li>
+      </ol>
+    </div>
+  </article>
+
+  <!-- 拖出复制 -->
+  <article class="feature" id="f-drag">
+    <div class="feature-text">
+      <h3>拖出去就是复制，原文件永远不动</h3>
+      <p>拖到桌面、文件夹、微信、Photoshop 都行。软件告诉 Windows 这次拖拽“只允许复制”，所以目标位置拿到的是一份副本，按着 Shift 也变不成移动。</p>
+      <ul class="facts">
+        <li><b>多选一起拖</b>Ctrl 点选、Shift 连选，拖拽图会叠成一摞，角上写着数量。</li>
+        <li><b>有反馈</b>复制成功后卡片闪一下对勾，底栏写明复制了几个文件。</li>
+        <li><b>不想拖</b>Ctrl+Shift+C 复制文件，到别处 Ctrl+V 粘贴。</li>
+      </ul>
+    </div>
+    <div class="feature-visual">
+      <div class="drag-demo" aria-hidden="true">
+       <div class="drag-stage">
+        <div class="drag-grid">
+          <span class="drag-tile drag-source"></span><span class="drag-tile"></span>
+          <span class="drag-tile"></span><span class="drag-tile"></span>
+        </div>
+        <span class="drag-ghost"><span class="drag-count">2</span></span>
+        <span class="drag-cursor"></span>
+        <div class="drag-target">
+          <svg viewBox="0 0 48 40"><path d="M3 9a4 4 0 0 1 4-4h11l5 5h18a4 4 0 0 1 4 4v19a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z" fill="#F2B544"/><path d="M3 15h42v17a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z" fill="#F7C95E"/></svg>
+          <span>桌面</span>
+          <span class="drag-badge">+ 复制</span>
+        </div>
+       </div>
+      </div>
+    </div>
+  </article>
+
+  <!-- 预览 -->
+  <article class="feature feature-flip" id="f-preview">
+    <div class="feature-text">
+      <h3>空格看大图，滚轮看细节</h3>
+      <p>选中一张按空格，缩略图从网格里原地放大，清晰大图到了再无缝换上。← → 看下一张，再按空格缩回原来的位置。</p>
+      <ul class="facts">
+        <li><b>滚轮缩放</b>以鼠标位置为中心放大，最多到原图像素的 4 倍，放大后按住拖动。</li>
+        <li><b>双击</b>在“适应窗口”和“原始尺寸”之间切换，<span class="kbd">+</span> <span class="kbd">-</span> <span class="kbd">0</span> 也能用。</li>
+        <li><b>自动换图</b>JPG、PNG、TIFF 放大到看得出糊时，自动换更大的图，最长边到 6000 px。</li>
+      </ul>
+      <p class="caveat">PSD、AI、PDF 能放大，但清晰度取决于文件里存的预览图，大约 1024 px，放得太大会糊。</p>
+    </div>
+    <div class="feature-visual">
+      <div class="zoom-demo" id="zoom-demo" tabindex="0" aria-label="缩放演示：点一下后用滚轮缩放，按住拖动，双击切换">
+        <img id="zoom-img" alt="示例商品图" draggable="false">
+        <span class="zoom-tag" id="zoom-tag">点一下，再用滚轮缩放</span>
+      </div>
+    </div>
+  </article>
+
+  <!-- 工作台 -->
+  <article class="feature" id="f-workbench">
+    <div class="feature-text">
+      <h3>要看一大片时，展开成工作台</h3>
+      <p>点搜索条右上角，或按 Ctrl+Shift+Enter，同一块面板原地变大：网格变宽，右边多一栏详情。不是跳到另一个长得不一样的窗口。</p>
+      <ul class="facts">
+        <li><b>详情栏</b>大图、尺寸、大小、修改时间、完整路径，四个常用操作。</li>
+        <li><b>同款</b>一键查看同一个 SKU 的全部文件。</li>
+        <li><b>随手调</b>拖动右下角改大小，列数跟着变，下次打开还是这个大小。</li>
+        <li><b>不打扰</b>搜索条切走就收起；工作台是普通窗口，切走还在。</li>
+      </ul>
+    </div>
+    <div class="feature-visual">
+      <div class="bench" id="bench" aria-hidden="true">
+        <div class="bench-bar"><span class="bench-glass"></span><span class="bench-q">14-5</span><span class="bench-btns"><i></i><i></i><i></i></span></div>
+        <div class="bench-body">
+          <div class="bench-grid" id="bench-grid"></div>
+          <div class="bench-side">
+            <div class="bench-preview" id="bench-preview"></div>
+            <b>14-5 主图 v3.psd</b>
+            <dl><dt>尺寸</dt><dd>800 × 800</dd><dt>大小</dt><dd>186 MB</dd><dt>修改</dt><dd>今天 10:24</dd></dl>
+            <div class="bench-actions"><span class="b-primary">打开</span><span>所在位置</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <!-- 实时同步 -->
+  <article class="feature feature-flip" id="f-sync">
+    <div class="feature-text">
+      <h3>索引自己保持最新</h3>
+      <p>同事往共享盘里放了新图，一般一两秒就能搜到，不用手动刷新。</p>
+      <ul class="facts">
+        <li><b>实时监听</b>新建、改名、删除、覆盖保存都会更新，变化每 4 秒合并写一次盘。</li>
+        <li><b>定期校准</b>每 2 小时快速核对一遍，目录没变就不列内容，多台电脑错开时间，不会一起去扫 NAS。</li>
+        <li><b>断线也能搜</b>NAS 离线时用上一次的快照，结果上标出“离线快照”，界面不会卡住。</li>
+      </ul>
+    </div>
+    <div class="feature-visual">
+      <ol class="timeline" aria-label="一个新文件从放进共享盘到能搜到">
+        <li><span>同事把“14-5 主图 v4.psd”存进共享盘</span></li>
+        <li><span>Windows 通知监听：这个文件夹有变化</span></li>
+        <li><span>合并这一批变化，只更新这几个文件，写进本机索引（测试里 1 秒以内）</span></li>
+        <li><span>你正在看的结果里出现这个文件，选中和滚动位置都不变</span></li>
+      </ol>
+    </div>
+  </article>
+</section>
+
+<!-- ============ 安全 ============ -->
+<section class="safety" id="safety">
+  <div class="wrap">
+    <h2>它只读你的共享盘</h2>
+    <p class="section-lead">给全组装之前，这几件事最好先说清楚。代码是开源的，每一条都可以自己去查。</p>
+    <div class="safety-cols">
+      <div>
+        <h3>会做的</h3>
+        <ul class="ticks">
+          <li>读取你指定文件夹里的文件名、大小、修改时间，建本机索引</li>
+          <li>预览时读取文件，或者调用 Windows 自带的缩略图组件</li>
+          <li>把索引、设置、缩略图缓存存在这台电脑的用户目录里</li>
+          <li>只装给当前用户，不需要管理员权限</li>
+          <li>如果你开着，呼出时读一次剪贴板文字，看是不是货号</li>
+        </ul>
+      </div>
+      <div>
+        <h3>不会做的</h3>
+        <ul class="crosses">
+          <li>不改、不删、不移动、不重命名共享盘上的任何文件</li>
+          <li>没有账号，没有统计，不联网，文件名和路径不会离开这台电脑</li>
+          <li>不保存剪贴板内容</li>
+          <li>不写系统级注册表（HKLM），不装服务</li>
+          <li>卸载时不碰共享盘，只删本机的程序和快捷方式</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 上手 ============ -->
+<section class="start" id="start">
+  <div class="wrap">
+    <h2>从下载到第一次搜索，大约三分钟</h2>
+    <ol class="steps">
+      <li>
+        <h3>下载安装</h3>
+        <p>只有一个安装文件。默认装在你的用户目录，可以选开始菜单和桌面快捷方式。已经装过会自动升级，设置和索引都保留。</p>
+        <p class="note">没有代码签名，Windows 第一次可能提示“已保护你的电脑”，点“更多信息”→“仍要运行”。</p>
+      </li>
+      <li>
+        <h3>跟着引导设置</h3>
+        <p>粘贴共享盘路径，比如 <code>\\NAS\设计部</code>，马上检查能不能连上。再选哪些文件夹不用录入，回收站、<code>@eaDir</code> 这类已经帮你勾好。</p>
+        <p class="note">第一次扫描在后台进行，速度看文件数量和网络，通常每秒几千个文件。</p>
+      </li>
+      <li>
+        <h3>按快捷键开始搜</h3>
+        <p>在任何地方按 <span class="kbd">Ctrl</span> <span class="kbd">Alt</span> <span class="kbd">Space</span>，输入，找到，拖走。扫描的同时会播放 5 张一分钟的动画教学。</p>
+        <p class="note">快捷键可以在设置里换。</p>
+      </li>
+    </ol>
+
+    <h3 class="keys-title">常用按键</h3>
+    <dl class="keys">
+      <div><dt><span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd">Space</span></dt><dd>呼出 / 收起搜索条</dd></div>
+      <div><dt><span class="kbd">↓</span> <span class="kbd">← →</span></dt><dd>进入结果、移动选中</dd></div>
+      <div><dt><span class="kbd">空格</span></dt><dd>预览，再按一次关闭</dd></div>
+      <div><dt><span class="kbd">↵</span></dt><dd>打开所在位置；选中文件夹就直接打开</dd></div>
+      <div><dt><span class="kbd">双击</span> <span class="kbd">Ctrl</span><span class="kbd">↵</span></dt><dd>打开文件</dd></div>
+      <div><dt><span class="kbd">Ctrl</span><span class="kbd">C</span></dt><dd>复制完整路径</dd></div>
+      <div><dt><span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">C</span></dt><dd>复制文件，到别处直接粘贴</dd></div>
+      <div><dt><span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">↵</span></dt><dd>展开 / 收回工作台</dd></div>
+      <div><dt><span class="kbd">Tab</span></dt><dd>切换分类</dd></div>
+      <div><dt><span class="kbd">Esc</span></dt><dd>先清空搜索，再按一次收起</dd></div>
+    </dl>
+  </div>
+</section>
+
+<!-- ============ 做不到的 ============ -->
+<section class="limits" id="limits">
+  <div class="wrap">
+    <h2>目前做不到的</h2>
+    <ul class="limit-list">
+      <li><b>只有 Windows 版。</b>用的是 WPF 和 Windows 的缩略图、拖拽组件，没有 Mac 版的计划。</li>
+      <li><b>每台电脑各自建索引。</b>全组共用一份索引和缩略图缓存还没做，每个人第一次都要扫一遍。</li>
+      <li><b>只搜文件名，不搜文件内容。</b>PSD 里的图层名、PDF 里的文字搜不到。</li>
+      <li><b>多音字只认一个读音。</b>比如“长”只认 zhang，搜 chang 找不到。</li>
+      <li><b>快速校准看不到“原地覆盖保存”。</b>这类修改靠实时监听；监听断过的话，要等下一次完整扫描。</li>
+      <li><b>没有代码签名。</b>第一次运行 Windows 会提示一下，公司的杀毒软件也可能要求放行。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 常见问题 ============ -->
+<section class="faq" id="faq">
+  <div class="wrap">
+    <h2>常见问题</h2>
+    <div class="faq-list">
+      <details>
+        <summary>公司电脑没有管理员权限，能装吗？</summary>
+        <p>能。默认装在 <code>%LocalAppData%\Programs\共享速搜</code>，只写当前用户能写的位置，不写 HKLM，不装服务。</p>
+      </details>
+      <details>
+        <summary>会不会把 NAS 拖慢？</summary>
+        <p>第一次扫描会把每个文件夹列一遍，之后搜索完全不访问共享盘。缩略图优先读本机缓存和文件头的预览图；后台预热在你操作时自动暂停，超过 4 MB 又没有内嵌预览的文件不预热。定期校准每 2 小时一次，目录没变就不列内容，多台电脑会错开时间。</p>
+      </details>
+      <details>
+        <summary>哪些格式能看缩略图？</summary>
+        <p>JPG、PNG、GIF、BMP、TIFF、WebP、HEIC 直接解码；PSD、AI、PDF、INDD 优先读文件里存的预览图，没有就交给 Windows 的预览组件；视频和 Office 文件走 Windows 缩略图。PSD 想要缩略图快，Photoshop 里“首选项 → 文件处理 → 图像预览”要设成“总是存储”。</p>
+      </details>
+      <details>
+        <summary>我的数据存在哪？怎么清掉？</summary>
+        <p>设置和索引在 <code>%AppData%\Oldlee\共享速搜</code>，缩略图缓存在 <code>%LocalAppData%\Oldlee\共享速搜\thumbs</code>。设置里可以清空缓存；卸载时勾选“同时删除我的设置、索引和缩略图缓存”会全部删掉。</p>
+      </details>
+      <details>
+        <summary>怎么卸载？</summary>
+        <p>Windows“设置 → 应用 → 共享速搜 → 卸载”。会删除程序文件、快捷方式和开机启动项，共享盘上的文件一个都不碰。</p>
+      </details>
+      <details>
+        <summary>GitHub 下载很慢怎么办？</summary>
+        <p>下载一次后放到共享盘里，同事从共享盘双击安装就行，安装包只有一个文件。</p>
+      </details>
+      <details>
+        <summary>可以改了自己用吗？</summary>
+        <p>可以。源码在 GitHub，MIT 协议，商用、修改、再分发都行，保留版权声明即可。用 .NET 8 和 WPF 写的，运行仓库里的 <code>build.ps1</code> 就能编译出安装包。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 下载 ============ -->
+<section class="download" id="download">
+  <div class="wrap download-inner">
+    <img src="assets/icon-256.png" alt="" width="88" height="88">
+    <h2>装上试试，三分钟就知道合不合适</h2>
+    <p>免费，开源，不用注册。卸载干净，不留东西在共享盘上。</p>
+    <div class="cta cta-center">
+      <a class="btn btn-primary btn-large" href="https://github.com/oldleeo/SharedQuickSearch/releases/latest/download/SharedQuickSearch-Setup.exe" data-download>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m0 0-3.5-3.5M10 12l3.5-3.5M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        下载 Windows 版
+      </a>
+    </div>
+    <p class="meta meta-center"><span data-version>最新版</span><span data-size>单个安装文件</span><span data-date></span><a href="https://github.com/oldleeo/SharedQuickSearch/releases" data-releases-link>所有版本和更新说明</a></p>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div class="foot-brand"><img src="assets/icon-256.png" alt="" width="22" height="22"><span>共享速搜</span></div>
+    <p>作者 <a href="https://x.com/oldleeoo">@老李Oldlee</a>，MIT 协议开源。</p>
+    <nav aria-label="页脚链接">
+      <a href="https://github.com/oldleeo/SharedQuickSearch" data-repo-link>源码</a>
+      <a href="https://github.com/oldleeo/SharedQuickSearch/issues" data-issues-link>反馈问题</a>
+      <a href="https://github.com/oldleeo/SharedQuickSearch/blob/main/PRIVACY.md" data-privacy-link>隐私说明</a>
+    </nav>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="assets/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,474 @@
+<Window x:Class="SharedQuickSearch.OnboardingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:SharedQuickSearch"
+        Title="欢迎使用共享速搜" Icon="/Assets/共享速搜.ico" Style="{StaticResource FlowWindow}" WindowStartupLocation="CenterScreen"
+        Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown">
+    <Window.Resources>
+        <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas, Microsoft YaHei UI</FontFamily>
+
+        <!-- 网络盘建议：小胶囊按钮 -->
+        <Style x:Key="SuggestChip" TargetType="Button">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,8,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" CornerRadius="14" Height="28" Padding="11,0" Background="{DynamicResource SpotlightTileBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE710;" Style="{StaticResource Icon}" FontSize="9" Foreground="{DynamicResource AccentBrush}" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding Label}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 已添加的共享盘目录 -->
+        <DataTemplate x:Key="RootTemplate" DataType="{x:Type local:RootCandidate}">
+            <Border Style="{StaticResource FlowRow}" Padding="14,10,8,10" Margin="0,0,0,6">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Ellipse x:Name="Dot" Width="8" Height="8" Fill="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="{Binding Path}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" Margin="12,0,12,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="State" Grid.Column="2" Text="{Binding StateText}" FontSize="11.5" Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <Button Grid.Column="3" Style="{StaticResource SmallIconButton}" Content="&#xE711;" FontSize="9" Width="28" Height="28" Tag="{Binding}" Click="RemoveRoot_Click" ToolTip="移除" Focusable="False"/>
+                </Grid>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding State}" Value="Ok">
+                    <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource SuccessBrush}"/>
+                    <Setter TargetName="State" Property="Foreground" Value="{DynamicResource SuccessBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Failed">
+                    <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource WarningBrush}"/>
+                    <Setter TargetName="State" Property="Foreground" Value="{DynamicResource WarningBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Checking">
+                    <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AccentBrush}"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <!-- 排除候选：一行一个文件夹 + 开关 -->
+        <DataTemplate x:Key="ExcludeTemplate" DataType="{x:Type local:ExcludeCandidate}">
+            <Border x:Name="Row" CornerRadius="10" Padding="14,8,12,8" Margin="0,0,0,4" Background="{DynamicResource SpotlightTileBrush}">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="&#xE8B7;" Style="{StaticResource Icon}" FontSize="14" Foreground="{DynamicResource TextTertiaryBrush}"/>
+                    <StackPanel Grid.Column="1" Margin="12,0,10,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding Parent}" FontSize="10.5" FontFamily="{StaticResource MonoFont}" Foreground="{DynamicResource TextTertiaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
+                    </StackPanel>
+                    <Border x:Name="ReasonTag" Grid.Column="2" CornerRadius="6" Padding="7,2" Margin="0,0,12,0" Background="{DynamicResource AccentSoftBrush}" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Reason}" FontSize="10.5" Foreground="{DynamicResource AccentBrush}"/>
+                    </Border>
+                    <CheckBox Grid.Column="3" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding IsExcluded, Mode=TwoWay}" VerticalAlignment="Center" ToolTip="打开 = 不录入这个文件夹"/>
+                </Grid>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Reason}" Value=""><Setter TargetName="ReasonTag" Property="Visibility" Value="Collapsed"/></DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid x:Name="Stage" Margin="20,14,20,30">
+        <Border Style="{StaticResource FlowShadow}"/>
+        <Border Style="{StaticResource FlowPanel}">
+            <Grid Width="758" Height="542">
+                <Grid.Clip><RectangleGeometry Rect="0,0,758,542" RadiusX="20" RadiusY="20"/></Grid.Clip>
+
+                <Canvas x:Name="Glow" IsHitTestVisible="False" Opacity="0">
+                    <Ellipse Width="520" Height="520" Canvas.Left="380" Canvas.Top="-240">
+                        <Ellipse.Fill>
+                            <RadialGradientBrush>
+                                <GradientStop Offset="0" Color="#402457E6"/>
+                                <GradientStop Offset="0.55" Color="#122457E6"/>
+                                <GradientStop Offset="1" Color="#002457E6"/>
+                            </RadialGradientBrush>
+                        </Ellipse.Fill>
+                        <Ellipse.RenderTransform><TranslateTransform x:Name="GlowShift"/></Ellipse.RenderTransform>
+                    </Ellipse>
+                </Canvas>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="60"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="78"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown" Margin="24,0,14,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Image Source="/Assets/共享速搜-icon.png" Width="22" Height="22" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <TextBlock Text="共享速搜" FontWeight="SemiBold" FontSize="13" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="HeaderMode" Text="首次设置" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" Margin="8,1,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Button x:Name="CloseButton" Grid.Column="2" Style="{StaticResource IconButton}" Width="36" Height="36" Content="&#xE8BB;" FontSize="10"
+                                Click="CloseButton_Click" ToolTip="关闭" Focusable="False"/>
+                    </Grid>
+
+                    <Grid x:Name="Pages" Grid.Row="1" Margin="52,4,52,0">
+
+                        <!-- 欢迎 -->
+                        <Grid x:Name="PageWelcome">
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,0,20">
+                                <Border Width="64" Height="64" CornerRadius="19" Background="{DynamicResource AccentSoftBrush}" HorizontalAlignment="Left" Margin="0,0,0,24">
+                                    <Image Source="/Assets/共享速搜-icon.png" Width="40" Height="40" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                </Border>
+                                <TextBlock Text="第一次使用" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="先花一分钟，把共享盘接进来。" Style="{StaticResource FlowTitle}" FontSize="30"/>
+                                <TextBlock Style="{StaticResource FlowLead}" MaxWidth="560" HorizontalAlignment="Left"
+                                           Text="告诉我要搜哪些共享盘文件夹、哪些不用录入，我扫描一遍建好索引。之后搜索不再翻共享盘，输入就出结果。"/>
+                                <StackPanel Margin="0,26,0,0">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                        <TextBlock Text="&#xE8D7;" Style="{StaticResource Icon}" Foreground="{DynamicResource AccentBrush}" Width="20"/>
+                                        <TextBlock Text="只读：只读取文件名、大小、修改时间，不改、不删、不移动共享盘上的任何文件。" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                        <TextBlock Text="&#xE977;" Style="{StaticResource Icon}" Foreground="{DynamicResource AccentBrush}" Width="20"/>
+                                        <TextBlock Text="本机：索引和缩略图缓存存在这台电脑上。" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE72E;" Style="{StaticResource Icon}" Foreground="{DynamicResource AccentBrush}" Width="20"/>
+                                        <TextBlock Text="不上传：没有账号、没有统计，文件名和路径不会离开这台电脑。" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 共享盘目录 -->
+                        <Grid x:Name="PageRoots" Visibility="Collapsed">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <StackPanel Margin="0,10,0,0">
+                                <TextBlock Text="第 1 步 · 共 3 步" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="要搜哪些共享盘文件夹" Style="{StaticResource FlowTitle}"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="可以加好几个。直接粘贴路径（比如 \\NAS\设计部 或 Z:\素材），或者点“浏览”选。加进来会马上检查能不能连上。"/>
+                                <Border Style="{StaticResource FlowRow}" Margin="0,18,0,0" Padding="14,5,5,5">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="RootPlaceholder" Text="\\服务器\共享文件夹" FontSize="13" FontFamily="{StaticResource MonoFont}" Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                        <TextBox x:Name="RootInput" Style="{StaticResource BareTextBox}" FontSize="13" FontFamily="{StaticResource MonoFont}" VerticalContentAlignment="Center"
+                                                 TextChanged="RootInput_TextChanged" KeyDown="RootInput_KeyDown"/>
+                                        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="浏览…" Height="34" Padding="14,0" Margin="8,0,6,0" Click="BrowseRoot_Click" Focusable="False"/>
+                                        <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="添加" Height="34" Padding="16,0" Click="AddRoot_Click" Focusable="False"/>
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="RootError" Style="{StaticResource FlowItemHint}" Foreground="{DynamicResource WarningBrush}" Margin="2,6,0,0" Visibility="Collapsed"/>
+                                <StackPanel x:Name="SuggestPanel" Margin="0,12,0,0" Visibility="Collapsed">
+                                    <TextBlock Text="这台电脑上的网络盘" Style="{StaticResource Caption}" Margin="2,0,0,8"/>
+                                    <ItemsControl x:Name="SuggestList">
+                                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate><DataTemplate><Button Style="{StaticResource SuggestChip}" Click="Suggest_Click" ToolTip="{Binding Path}"/></DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </StackPanel>
+                            <ScrollViewer Grid.Row="1" Margin="0,8,0,8" VerticalScrollBarVisibility="Auto" Focusable="False">
+                                <Grid>
+                                    <ItemsControl x:Name="RootsList" ItemTemplate="{StaticResource RootTemplate}" Focusable="False"/>
+                                    <TextBlock x:Name="RootsEmpty" Text="还没有添加目录" Style="{StaticResource Caption}" Margin="2,6,0,0"/>
+                                </Grid>
+                            </ScrollViewer>
+                        </Grid>
+
+                        <!-- 排除文件夹 -->
+                        <Grid x:Name="PageExclude" Visibility="Collapsed">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <StackPanel Margin="0,10,0,0">
+                                <TextBlock Text="第 2 步 · 共 3 步" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="哪些文件夹不用录入" Style="{StaticResource FlowTitle}"/>
+                                <TextBlock x:Name="ExcludeLead" Style="{StaticResource FlowLead}" Text="打开开关的文件夹不会进索引。我在你的共享盘第一层找了一遍，回收站、缩略图缓存这类已经先帮你打开了。"/>
+                            </StackPanel>
+                            <Grid Grid.Row="1" Margin="0,16,0,8">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                                    <ItemsControl x:Name="ExcludeList" ItemTemplate="{StaticResource ExcludeTemplate}" Focusable="False"/>
+                                </ScrollViewer>
+                                <StackPanel x:Name="ExcludeLoading" Orientation="Horizontal" VerticalAlignment="Top" Margin="2,4,0,0">
+                                    <Ellipse x:Name="LoadingDot" Width="8" Height="8" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="ExcludeLoadingText" Text="正在读取共享盘的第一层目录…" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="10,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Grid.Row="2" Margin="0,0,0,6">
+                                <Border Style="{StaticResource FlowRow}" Padding="14,5,5,5" Margin="0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="ExcludePlaceholder" Text="还有别的？输入或浏览一个子文件夹" FontSize="12.5" Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                        <TextBox x:Name="ExcludeInput" Style="{StaticResource BareTextBox}" FontSize="12.5" FontFamily="{StaticResource MonoFont}" VerticalContentAlignment="Center"
+                                                 TextChanged="ExcludeInput_TextChanged" KeyDown="ExcludeInput_KeyDown"/>
+                                        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="浏览…" Height="32" Padding="12,0" Margin="8,0,6,0" Click="BrowseExclude_Click" Focusable="False"/>
+                                        <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="排除" Height="32" Padding="14,0" Click="AddExclude_Click" Focusable="False"/>
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="ExcludeError" Style="{StaticResource FlowItemHint}" Foreground="{DynamicResource WarningBrush}" Margin="2,6,0,0" Visibility="Collapsed"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 选项 -->
+                        <Grid x:Name="PageOptions" Visibility="Collapsed">
+                            <StackPanel Margin="0,10,0,0">
+                                <TextBlock Text="第 3 步 · 共 3 步" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="几个小选项" Style="{StaticResource FlowTitle}"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="都可以以后在设置里改。"/>
+                                <Border Style="{StaticResource FlowRow}" Margin="0,20,0,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="开机自动启动" Style="{StaticResource FlowItemTitle}"/><TextBlock Text="在后台安静运行，快捷键随时能用，索引也会一直保持最新。" Style="{StaticResource FlowItemHint}"/></StackPanel>
+                                        <CheckBox x:Name="AutoStartCheck" Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="True" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource FlowRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="呼出时只显示搜索条" Style="{StaticResource FlowItemTitle}"/><TextBlock Text="关掉则每次直接打开工作台（大网格 + 右侧详情）。" Style="{StaticResource FlowItemHint}"/></StackPanel>
+                                        <CheckBox x:Name="SpotlightCheck" Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="True" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource FlowRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="自动填入剪贴板里的 SKU" Style="{StaticResource FlowItemTitle}"/><TextBlock Text="刚复制了一个货号，呼出时直接帮你填好。只在本机读剪贴板，不保存、不上传。" Style="{StaticResource FlowItemHint}"/></StackPanel>
+                                        <CheckBox x:Name="ClipboardCheck" Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="True" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                                    </Grid>
+                                </Border>
+                                <StackPanel x:Name="HotkeyRow" Orientation="Horizontal" Margin="2,12,0,0">
+                                    <TextBlock Text="呼出快捷键" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                    <StackPanel x:Name="HotkeyCaps" Orientation="Horizontal"/>
+                                    <TextBlock Text="在设置里可以换" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 开始扫描 -->
+                        <Grid x:Name="PageReady" Visibility="Collapsed">
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,0,20">
+                                <TextBlock Text="准备好了" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="开始第一次扫描" Style="{StaticResource FlowTitle}" FontSize="30"/>
+                                <TextBlock x:Name="ReadySummary" Style="{StaticResource FlowLead}" MaxWidth="600" HorizontalAlignment="Left"/>
+                                <UniformGrid Columns="3" Margin="0,26,0,0" HorizontalAlignment="Left" Width="560">
+                                    <StackPanel>
+                                        <TextBlock x:Name="ReadyRoots" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="30" FontWeight="SemiBold"/>
+                                        <TextBlock Text="个目录要索引" Style="{StaticResource Caption}" FontSize="12"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock x:Name="ReadyExcludes" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="30" FontWeight="SemiBold"/>
+                                        <TextBlock Text="个文件夹跳过" Style="{StaticResource Caption}" FontSize="12"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock x:Name="ReadyOnline" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="30" FontWeight="SemiBold"/>
+                                        <TextBlock Text="个目录现在能连上" Style="{StaticResource Caption}" FontSize="12"/>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <TextBlock Style="{StaticResource FlowItemHint}" Margin="0,26,0,0" MaxWidth="600" HorizontalAlignment="Left"
+                                           Text="第一次扫描要把每个文件夹都列一遍，速度取决于文件数量和网络，通常每秒几千个文件。扫描在后台进行，这期间先看看怎么用。"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- ============ 使用教学 ============ -->
+
+                        <!-- 1 呼出 -->
+                        <Grid x:Name="TutorialSummon" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Border CornerRadius="18" Background="{DynamicResource SpotlightTileBrush}" Height="260" VerticalAlignment="Center" ClipToBounds="True">
+                                <Canvas Width="330" Height="260">
+                                    <Border x:Name="S1Bar" Canvas.Left="30" Canvas.Top="62" Width="270" Height="46" CornerRadius="12" Background="{DynamicResource SpotlightPanelBrush}"
+                                            BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" RenderTransformOrigin="0.5,0.5" Opacity="0">
+                                        <Border.RenderTransform><ScaleTransform x:Name="S1BarScale" ScaleX="0.94" ScaleY="0.94"/></Border.RenderTransform>
+                                        <Border.Effect><DropShadowEffect BlurRadius="18" ShadowDepth="6" Direction="270" Opacity="0.18" Color="#000000" RenderingBias="Performance"/></Border.Effect>
+                                        <StackPanel Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
+                                            <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" Foreground="{DynamicResource AccentBrush}" FontSize="13"/>
+                                            <TextBlock Text="搜索 SKU、文件名或拼音首字母" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" Margin="10,0,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Grid Canvas.Left="0" Canvas.Top="166" Width="330">
+                                        <StackPanel x:Name="S1Keys" Orientation="Horizontal" HorizontalAlignment="Center"/>
+                                    </Grid>
+                                </Canvas>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="40,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="使用教学 · 1 / 5" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="在任何地方按一下，搜索条就出来" Style="{StaticResource FlowTitle}" FontSize="23"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="不用先切到软件。正在 PS 里、浏览器里、微信里都可以按。再按一次或按 Esc 就收起。"/>
+                                <TextBlock Style="{StaticResource FlowItemHint}" Margin="0,14,0,0" Text="搜索条只有一行，输入后才往下展开。切到别的窗口它会自己收起，两分钟内再呼出，上次的结果还在。"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 2 搜索 -->
+                        <Grid x:Name="TutorialSearch" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Border CornerRadius="18" Background="{DynamicResource SpotlightTileBrush}" Height="260" VerticalAlignment="Center" ClipToBounds="True">
+                                <Canvas Width="330" Height="260">
+                                    <Border Canvas.Left="24" Canvas.Top="30" Width="282" Height="44" CornerRadius="12" Background="{DynamicResource SpotlightPanelBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1">
+                                        <StackPanel Orientation="Horizontal" Margin="14,0" VerticalAlignment="Center">
+                                            <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" Foreground="{DynamicResource AccentBrush}" FontSize="13"/>
+                                            <TextBlock x:Name="S2Typed" FontSize="14" FontWeight="Medium" FontFamily="{StaticResource MonoFont}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                            <Border x:Name="S2Caret" Width="1.5" Height="16" Background="{DynamicResource AccentBrush}" Margin="2,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border x:Name="S2Chip" Canvas.Left="24" Canvas.Top="84" CornerRadius="11" Height="22" Padding="10,0" Background="{DynamicResource AccentSoftBrush}" BorderBrush="{DynamicResource SelectedStrokeBrush}" BorderThickness="1" Opacity="0">
+                                        <TextBlock x:Name="S2ChipText" Text="PSD" FontSize="11" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <UniformGrid x:Name="S2Tiles" Canvas.Left="24" Canvas.Top="118" Width="282" Height="112" Columns="4" Rows="1"/>
+                                </Canvas>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="40,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="使用教学 · 2 / 5" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="SKU 随便写，拼音首字母也行" Style="{StaticResource FlowTitle}" FontSize="23"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="14-5、14_5、145 都能找到 SKU_14_5。bdt 就是“白底图”。"/>
+                                <StackPanel Margin="0,16,0,0">
+                                    <TextBlock Style="{StaticResource FlowItemHint}" Text="空格后面加条件，会变成蓝色胶囊，点 × 去掉："/>
+                                    <TextBlock FontFamily="{StaticResource MonoFont}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0" LineHeight="21"
+                                               Text="psd  jpg  ai        按格式&#x0a;本周  今天  7天     按修改时间&#x0a;&gt;50mb  &lt;1mb      按大小&#x0a;-旧版                排除含这个词的"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 3 拖出复制 -->
+                        <Grid x:Name="TutorialDrag" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Border CornerRadius="18" Background="{DynamicResource SpotlightTileBrush}" Height="260" VerticalAlignment="Center" ClipToBounds="True">
+                                <Canvas Width="330" Height="260">
+                                    <!-- 左：网格里的三张卡片 -->
+                                    <Border Canvas.Left="22" Canvas.Top="40" Width="132" Height="180" CornerRadius="12" Background="{DynamicResource SpotlightPanelBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1"/>
+                                    <Border x:Name="S3Source" Canvas.Left="34" Canvas.Top="54" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource AccentSoftBrush}">
+                                        <Border CornerRadius="4" Width="22" Height="22" Background="{DynamicResource AccentBrush}" Opacity="0.75"/>
+                                    </Border>
+                                    <Border Canvas.Left="92" Canvas.Top="54" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource SpotlightTileBrush}"/>
+                                    <Border Canvas.Left="34" Canvas.Top="114" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource SpotlightTileBrush}"/>
+                                    <Border Canvas.Left="92" Canvas.Top="114" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource SpotlightTileBrush}"/>
+                                    <!-- 右：目标文件夹 -->
+                                    <Border x:Name="S3Target" Canvas.Left="200" Canvas.Top="86" Width="104" Height="88" CornerRadius="12" Background="{DynamicResource SpotlightPanelBrush}"
+                                            BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" RenderTransformOrigin="0.5,0.5">
+                                        <Border.RenderTransform><ScaleTransform x:Name="S3TargetScale"/></Border.RenderTransform>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="&#xE8B7;" Style="{StaticResource Icon}" FontSize="26" Foreground="{DynamicResource WarningBrush}"/>
+                                            <TextBlock Text="桌面 / 微信 / PS" FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <!-- 拖着走的那一份（原卡片留在原地） -->
+                                    <Border x:Name="S3Ghost" Canvas.Left="34" Canvas.Top="54" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource AccentSoftBrush}" Opacity="0">
+                                        <Border.RenderTransform><TranslateTransform x:Name="S3GhostMove"/></Border.RenderTransform>
+                                        <Border.Effect><DropShadowEffect BlurRadius="14" ShadowDepth="5" Direction="270" Opacity="0.22" Color="#000000" RenderingBias="Performance"/></Border.Effect>
+                                        <Border CornerRadius="4" Width="22" Height="22" Background="{DynamicResource AccentBrush}" Opacity="0.75"/>
+                                    </Border>
+                                    <Border x:Name="S3Badge" Canvas.Left="226" Canvas.Top="54" CornerRadius="10" Height="20" Padding="8,0" Background="{DynamicResource AccentBrush}" Opacity="0">
+                                        <TextBlock Text="+ 复制" FontSize="10.5" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center"/>
+                                    </Border>
+                                </Canvas>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="40,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="使用教学 · 3 / 5" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="拖出去就是复制一份" Style="{StaticResource FlowTitle}" FontSize="23"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="拖到桌面、文件夹、微信、PS 都行。共享盘上的原文件永远留在原地，按着 Shift 拖也不会变成移动。"/>
+                                <TextBlock Style="{StaticResource FlowItemHint}" Margin="0,14,0,0" Text="Ctrl 点选、Shift 连选，选中的可以一起拖。不想拖就按 Ctrl+Shift+C 复制文件，到别处 Ctrl+V 粘贴。"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 4 预览 -->
+                        <Grid x:Name="TutorialPreview" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Border CornerRadius="18" Background="{DynamicResource SpotlightTileBrush}" Height="260" VerticalAlignment="Center" ClipToBounds="True">
+                                <Canvas Width="330" Height="260">
+                                    <Border Canvas.Left="24" Canvas.Top="186" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource AccentSoftBrush}"/>
+                                    <Border Canvas.Left="82" Canvas.Top="186" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource SpotlightPanelBrush}"/>
+                                    <Border Canvas.Left="140" Canvas.Top="186" Width="50" Height="50" CornerRadius="8" Background="{DynamicResource SpotlightPanelBrush}"/>
+                                    <!-- 放大出来的预览：从左下角那张卡片的位置飞出来 -->
+                                    <Border x:Name="S4Big" Canvas.Left="24" Canvas.Top="86" Width="282" Height="150" CornerRadius="12" Background="{DynamicResource SpotlightPanelBrush}"
+                                            BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" ClipToBounds="True" Opacity="0" RenderTransformOrigin="0,1">
+                                        <Border.RenderTransform><ScaleTransform x:Name="S4BigScale" ScaleX="0.18" ScaleY="0.33"/></Border.RenderTransform>
+                                        <Grid ClipToBounds="True">
+                                            <Grid x:Name="S4Art" RenderTransformOrigin="0.62,0.45">
+                                                <Grid.RenderTransform><ScaleTransform x:Name="S4ArtScale"/></Grid.RenderTransform>
+                                                <Ellipse Width="96" Height="96" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="40,0,0,0">
+                                                    <Ellipse.Fill>
+                                                        <RadialGradientBrush GradientOrigin="0.4,0.35">
+                                                            <GradientStop Offset="0" Color="#9FB6F7"/>
+                                                            <GradientStop Offset="0.6" Color="#2457E6"/>
+                                                            <GradientStop Offset="1" Color="#16357F"/>
+                                                        </RadialGradientBrush>
+                                                    </Ellipse.Fill>
+                                                </Ellipse>
+                                                <Ellipse Width="34" Height="34" Fill="#10224E" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="40,0,0,0"/>
+                                                <Ellipse Width="10" Height="10" Fill="White" Opacity="0.85" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="22,0,0,18"/>
+                                                <Border Width="56" Height="10" CornerRadius="5" Background="{DynamicResource SpotlightTileBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="14,14,0,0"/>
+                                            </Grid>
+                                            <Border x:Name="S4Zoom" CornerRadius="6" Padding="7,2" Background="#C815171C" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8" Opacity="0">
+                                                <TextBlock x:Name="S4ZoomText" Text="180%" FontSize="10" FontFamily="{StaticResource MonoFont}" Foreground="White"/>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </Canvas>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="40,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="使用教学 · 4 / 5" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="按空格看大图，滚轮放大细节" Style="{StaticResource FlowTitle}" FontSize="23"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="选中一张按空格，缩略图原地放大。← → 切换下一张，再按空格缩回去。"/>
+                                <StackPanel x:Name="S4Keys" Margin="0,16,0,0"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 5 回车 / 双击 / 工作台 -->
+                        <Grid x:Name="TutorialKeys" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Border CornerRadius="18" Background="{DynamicResource SpotlightTileBrush}" Height="260" VerticalAlignment="Center" ClipToBounds="True">
+                                <Canvas Width="330" Height="260">
+                                    <Border x:Name="S5Panel" Canvas.Left="40" Canvas.Top="40" Width="250" Height="180" CornerRadius="12" Background="{DynamicResource SpotlightPanelBrush}"
+                                            BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" RenderTransformOrigin="0.5,0">
+                                        <Border.RenderTransform><ScaleTransform x:Name="S5PanelScale" ScaleX="0.72" ScaleY="0.24"/></Border.RenderTransform>
+                                    </Border>
+                                    <Grid x:Name="S5Content" Canvas.Left="52" Canvas.Top="52" Width="226" Height="156" Opacity="0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition Height="22"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                        <Border Grid.ColumnSpan="2" CornerRadius="5" Background="{DynamicResource SpotlightTileBrush}" Height="14" VerticalAlignment="Top"/>
+                                        <UniformGrid Grid.Row="1" Columns="3" Rows="3" Margin="0,4,8,0">
+                                            <Border CornerRadius="5" Margin="2" Background="{DynamicResource AccentSoftBrush}"/>
+                                            <Border CornerRadius="5" Margin="2" Background="{DynamicResource SpotlightTileBrush}"/>
+                                            <Border CornerRadius="5" Margin="2" Background="{DynamicResource SpotlightTileBrush}"/>
+                                            <Border CornerRadius="5" Margin="2" Background="{DynamicResource SpotlightTileBrush}"/>
+                                            <Border CornerRadius="5" Margin="2" Background="{DynamicResource SpotlightTileBrush}"/>
+                                            <Border CornerRadius="5" Margin="2" Background="{DynamicResource SpotlightTileBrush}"/>
+                                        </UniformGrid>
+                                        <Border x:Name="S5Side" Grid.Row="1" Grid.Column="1" CornerRadius="6" Margin="0,6,0,0" Background="{DynamicResource SpotlightTileBrush}" Opacity="0">
+                                            <StackPanel Margin="7">
+                                                <Border CornerRadius="4" Height="40" Background="{DynamicResource AccentSoftBrush}"/>
+                                                <Border CornerRadius="2" Height="5" Margin="0,8,14,0" Background="{DynamicResource StrokeStrongBrush}"/>
+                                                <Border CornerRadius="2" Height="5" Margin="0,5,24,0" Background="{DynamicResource StrokeBrush}"/>
+                                                <Border CornerRadius="4" Height="12" Margin="0,10,0,0" Background="{DynamicResource AccentBrush}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </Canvas>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="40,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="使用教学 · 5 / 5" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="回车去文件夹，双击打开" Style="{StaticResource FlowTitle}" FontSize="23"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="想看一大片结果、看文件详情，就展开成工作台：同一块面板变大，右边多一栏详情。"/>
+                                <StackPanel x:Name="S5Keys" Margin="0,16,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+
+                    <!-- 底栏：步骤圆点 / 扫描进度 + 按钮 -->
+                    <Grid Grid.Row="2" Margin="52,0,32,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel x:Name="Dots" Orientation="Horizontal" VerticalAlignment="Center"/>
+                        <StackPanel x:Name="ScanStatus" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="22,0,12,0" Visibility="Collapsed">
+                            <Ellipse x:Name="ScanDot" Width="7" Height="7" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="ScanText" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="9,0,0,0" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="SkipButton" Style="{StaticResource GhostButton}" Content="以后再说" Height="38" Padding="16,0" Margin="0,0,6,0" Click="SkipButton_Click" Focusable="False" Visibility="Collapsed"/>
+                            <Button x:Name="BackButton" Style="{StaticResource GhostButton}" Content="上一步" Height="38" Padding="18,0" Margin="0,0,10,0" Click="BackButton_Click" Focusable="False"/>
+                            <Button x:Name="NextButton" Style="{StaticResource PrimaryButton}" Content="开始" Height="38" MinWidth="120" Padding="22,0" Click="NextButton_Click" Focusable="False"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
