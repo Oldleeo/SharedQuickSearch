@@ -61,12 +61,7 @@ public static class InstallerEngine
     }
 
     /// <summary>比较版本号：a 比 b 新返回正数。</summary>
-    public static int CompareVersions(string a, string b)
-    {
-        System.Version.TryParse(a, out var va);
-        System.Version.TryParse(b, out var vb);
-        return (va ?? new System.Version(0, 0)).CompareTo(vb ?? new System.Version(0, 0));
-    }
+    public static int CompareVersions(string a, string b) => UpdateRules.Compare(a, b);
 
     /// <summary>用户选的文件夹不叫“共享速搜”时，在里面建一个“共享速搜”子目录，避免和别的软件混在一起。</summary>
     public static string NormalizeTarget(string chosen)
@@ -151,14 +146,7 @@ public static class InstallerEngine
             var staging = target + ".new";
             await CopyWithProgressAsync(source, staging, fraction => progress.Report(new SetupProgress(0.05 + fraction * 0.75, "复制程序文件")), cancellationToken);
             CleanupOldCopies(directory);
-            if (File.Exists(target))
-            {
-                // 旧程序如果还没完全退出，删除会失败，但改名可以；用不重复的名字，避免上次留下的 .old 还被占用
-                var old = $"{target}.old-{Guid.NewGuid():N}";
-                File.Move(target, old);
-                try { File.Delete(old); } catch { /* 下次安装再清 */ }
-            }
-            File.Move(staging, target, overwrite: true);
+            await SwapInAsync(staging, target, cancellationToken);
         }
 
         progress.Report(new SetupProgress(0.85, "创建快捷方式"));
@@ -181,6 +169,44 @@ public static class InstallerEngine
         return target;
     }
 
+    /// <summary>
+    /// 把 .new 换成正式程序，任何一步失败都把旧程序放回去：绝不留下一个没有 共享速搜.exe 的安装目录。
+    /// 杀毒软件常会在新写入的 exe 上短暂加锁，所以每一步都重试几次。
+    /// </summary>
+    private static async Task SwapInAsync(string staging, string target, CancellationToken cancellationToken)
+    {
+        string? old = null;
+        if (File.Exists(target))
+        {
+            // 旧程序如果还没完全退出，删除会失败，但改名可以；用不重复的名字，避免上次留下的 .old 还被占用
+            old = $"{target}.old-{Guid.NewGuid():N}";
+            await RetryAsync(() => File.Move(target, old), cancellationToken);
+        }
+        try
+        {
+            await RetryAsync(() => File.Move(staging, target, overwrite: false), cancellationToken);
+        }
+        catch
+        {
+            if (old is not null && !File.Exists(target))
+                try { File.Move(old, target); } catch { /* 放不回去：.old 文件还在，手动改名就能用 */ }
+            throw;
+        }
+        if (old is not null) try { File.Delete(old); } catch { /* 下次安装再清 */ }
+    }
+
+    private static async Task RetryAsync(Action action, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { action(); return; }
+            catch (Exception ex) when (attempt < 6 && ex is IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(300 * attempt, CancellationToken.None);
+            }
+        }
+    }
+
     private static void UpdateLink(string link, bool wanted, string target, string directory)
     {
         if (wanted)
@@ -189,6 +215,45 @@ public static class InstallerEngine
             return;
         }
         if (IsOurLink(link)) try { File.Delete(link); } catch { }
+    }
+
+    /// <summary>这个快捷方式存在、而且指向共享速搜（自动更新时保持用户原来的快捷方式选择）。</summary>
+    public static bool HasOurLink(string link) => File.Exists(link) && IsOurLink(link);
+
+    /// <summary>Capture only this application's registration, shortcuts and startup entry for transactional updates.</summary>
+    public static Action CaptureUpdateMetadata()
+    {
+        var registration = new Dictionary<string, (object Value, RegistryValueKind Kind)>();
+        using (var key = Registry.CurrentUser.OpenSubKey(UninstallKeyPath))
+            if (key is not null)
+                foreach (var name in key.GetValueNames())
+                    if (key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is { } value)
+                        registration[name] = (value, key.GetValueKind(name));
+        var links = new[] { DesktopLink, StartMenuLink }.ToDictionary(x => x, x => File.Exists(x) ? File.ReadAllBytes(x) : null);
+        const string runPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        object? startup;
+        RegistryValueKind startupKind = RegistryValueKind.String;
+        using (var key = Registry.CurrentUser.OpenSubKey(runPath))
+        {
+            startup = key?.GetValue(ProductName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (startup is not null) startupKind = key!.GetValueKind(ProductName);
+        }
+        return () =>
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(UninstallKeyPath, true))
+            {
+                foreach (var name in key.GetValueNames()) if (!registration.ContainsKey(name)) key.DeleteValue(name, false);
+                foreach (var (name, value) in registration) key.SetValue(name, value.Value, value.Kind);
+            }
+            foreach (var (file, bytes) in links)
+            {
+                if (bytes is not null) File.WriteAllBytes(file, bytes);
+                else if (IsOurLink(file)) File.Delete(file);
+            }
+            using var run = Registry.CurrentUser.CreateSubKey(runPath, true);
+            if (startup is null) run.DeleteValue(ProductName, false);
+            else run.SetValue(ProductName, startup, startupKind);
+        };
     }
 
     private static bool IsOurLink(string link)

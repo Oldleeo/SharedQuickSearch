@@ -11,6 +11,9 @@ public sealed record IndexProgress(
     TimeSpan Elapsed,
     TimeSpan? EstimatedRemaining,
     double ItemsPerSecond);
+/// <summary>文件夹预览：挑出来做拼图的几个文件，以及直接子项的数量。全部来自本机索引，不访问共享盘。</summary>
+public sealed record FolderPreviewInfo(IReadOnlyList<FileEntry> Samples, int FileCount, int FolderCount, DateTime NewestUtc);
+
 public sealed record IndexBuildResult(int EntryCount, int SkippedCount, IReadOnlyList<string> Errors, TimeSpan Elapsed, int ReusedDirectories = 0);
 
 /// <summary>一次搜索的完整结果：排好序的前 N 项、总命中数、各分类命中数、识别出的条件、耗时。</summary>
@@ -77,14 +80,31 @@ public sealed class FileIndexService : IDisposable
             Records = records;
             ByPath = new Dictionary<string, SearchRecord>(records.Count, StringComparer.OrdinalIgnoreCase);
             foreach (var record in records) ByPath[record.Entry.FullPath] = record;
+            Children = new Lazy<Dictionary<string, List<FileEntry>>>(() =>
+            {
+                var map = new Dictionary<string, List<FileEntry>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var record in records)
+                {
+                    var parent = record.Entry.ParentPath;
+                    if (string.IsNullOrEmpty(parent)) continue;
+                    if (!map.TryGetValue(parent, out var list)) map[parent] = list = new List<FileEntry>();
+                    list.Add(record.Entry);
+                }
+                return map;
+            }, LazyThreadSafetyMode.ExecutionAndPublication);
         }
         public List<SearchRecord> Records { get; }
         public Dictionary<string, SearchRecord> ByPath { get; }
+
+        /// <summary>父目录 → 直接子项。第一次用到时才建（20 万条约几十毫秒），之后同一个快照直接查。</summary>
+        public Lazy<Dictionary<string, List<FileEntry>>> Children { get; }
     }
 
     private sealed record PrefixCache(Snapshot Snapshot, string TextKey, List<SearchRecord> Matches);
 
     private readonly string _indexPath;
+    // 1.9 之前全角 ／ ＼ 被当成路径分隔符：旧索引里这类文件的路径是错的，下一次校准要完整扫描
+    private volatile bool _needsFullScan;
     private readonly SemaphoreSlim _mutate = new(1, 1);
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly HashSet<string> _deferred = new(StringComparer.OrdinalIgnoreCase);
@@ -107,6 +127,44 @@ public sealed class FileIndexService : IDisposable
     /// <summary>当前索引条目快照（后台缩略图预热用）。</summary>
     public IReadOnlyList<FileEntry> SnapshotEntries() => _snapshot.Records.Select(x => x.Entry).ToArray();
 
+    /// <summary>
+    /// 文件夹预览：先在这个文件夹里挑最近修改的图片 / 设计稿，不够再往下找几层子文件夹（最多 3 层、40 个文件夹）。
+    /// 只查本机索引，不列共享盘目录。
+    /// </summary>
+    public FolderPreviewInfo FolderPreview(string folderPath, int sampleCount = 3)
+    {
+        var children = _snapshot.Children.Value;
+        var key = PathRules.Normalize(folderPath);
+        if (!children.TryGetValue(key, out var direct)) return new FolderPreviewInfo(Array.Empty<FileEntry>(), 0, 0, DateTime.MinValue);
+
+        var files = 0;
+        var folders = 0;
+        var newest = DateTime.MinValue;
+        foreach (var entry in direct)
+        {
+            if (entry.IsDirectory) folders++; else files++;
+            if (entry.LastWriteUtc > newest) newest = entry.LastWriteUtc;
+        }
+
+        var samples = new List<FileEntry>(sampleCount);
+        var queue = new Queue<(List<FileEntry> Items, int Depth)>();
+        queue.Enqueue((direct, 0));
+        var visited = 0;
+        while (queue.Count > 0 && samples.Count < sampleCount && visited++ < 40)
+        {
+            var (items, depth) = queue.Dequeue();
+            foreach (var entry in items.Where(x => !x.IsDirectory && FileTypes.HasVisualPreview(x.Extension)).OrderByDescending(x => x.LastWriteUtc))
+            {
+                samples.Add(entry);
+                if (samples.Count >= sampleCount) break;
+            }
+            if (depth >= 3) continue;
+            foreach (var sub in items.Where(x => x.IsDirectory).OrderByDescending(x => x.LastWriteUtc))
+                if (children.TryGetValue(sub.FullPath, out var subItems)) queue.Enqueue((subItems, depth + 1));
+        }
+        return new FolderPreviewInfo(samples, files, folders, newest);
+    }
+
     public bool TryGet(string path, out FileEntry? entry)
     {
         if (_snapshot.ByPath.TryGetValue(PathRules.Normalize(path), out var record)) { entry = record.Entry; return true; }
@@ -128,6 +186,11 @@ public sealed class FileIndexService : IDisposable
                 entries = await JsonSerializer.DeserializeAsync<List<FileEntry>>(stream) ?? new();
 
             var originalCount = entries.Count;
+            if (entries.Any(x => x.Name.IndexOfAny(FullWidthSeparators) >= 0))
+            {
+                entries.RemoveAll(x => x.Name.IndexOfAny(FullWidthSeparators) >= 0);
+                _needsFullScan = true;
+            }
             var normalizedExclusions = PathRules.NormalizeDistinct(exclusions);
             var records = await Task.Run(() => entries
                 .Where(x => !PathRules.IsExcluded(x.FullPath, normalizedExclusions) && !IsBuiltInIgnored(x))
@@ -189,6 +252,8 @@ public sealed class FileIndexService : IDisposable
     /// 新增、删除、改名都会改变所在目录的修改时间，所以能发现；只有“原地覆盖保存”不会，那部分由实时监听负责。
     /// 手动“刷新索引”用完整扫描（quick = false）。
     /// </param>
+    private static readonly char[] FullWidthSeparators = { '／', '＼' };
+
     public async Task<IndexBuildResult> RebuildAsync(
         IReadOnlyCollection<string> roots,
         IReadOnlyCollection<string> exclusions,
@@ -196,6 +261,7 @@ public sealed class FileIndexService : IDisposable
         CancellationToken cancellationToken,
         bool quick = false)
     {
+        if (_needsFullScan) quick = false;
         var started = DateTime.UtcNow;
         var normalizedRoots = PathRules.NormalizeDistinct(roots);
         var normalizedExclusions = PathRules.NormalizeDistinct(exclusions);
@@ -355,6 +421,7 @@ public sealed class FileIndexService : IDisposable
             var elapsed = DateTime.UtcNow - started;
             progress?.Report(new IndexProgress(Count, "索引完成", 100, elapsed, TimeSpan.Zero,
                 elapsed.TotalSeconds <= 0 ? 0 : Count / elapsed.TotalSeconds));
+            if (failedPaths.Count == 0) _needsFullScan = false;
             return new IndexBuildResult(Count, skipped, errors, DateTime.UtcNow - started, reused);
         }
         finally

@@ -107,17 +107,24 @@ Check("搜索：名字命中排在路径命中前面", index.Search("14-5 psd", 
     var json = File.ReadAllText(indexPath);
     Check("持久化：不写入界面派生字段", !json.Contains("TypeLabel") && !json.Contains("IconGlyph") && !json.Contains("CardMeta"));
 
+    // 1.9 迁移：旧索引里文件名带全角 ／ ＼ 的条目路径是错的，载入时丢掉，等完整扫描补回
+    var legacyPath = Path.Combine(root, "legacy-index.json");
+    var legacyEntries = System.Text.Json.JsonSerializer.Deserialize<List<FileEntry>>(json)!;
+    var bad = legacyEntries.First(x => !x.IsDirectory);
+    bad.Name = "图片／旧.psd";
+    File.WriteAllText(legacyPath, System.Text.Json.JsonSerializer.Serialize(legacyEntries));
+    var legacy = new FileIndexService(legacyPath);
+    var legacyCount = await legacy.LoadAsync(new[] { excluded });
+    Check("迁移：全角分隔符的旧条目载入时被丢掉", legacyCount == legacyEntries.Count - 1, $"{legacyCount} / {legacyEntries.Count}");
+
     // 并发：扫描进行中到达的变更不会丢
     var bulk = Path.Combine(root, "bulk");
     Directory.CreateDirectory(bulk);
-    var unchangedDirectoryTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     for (var d = 0; d < 40; d++)
     {
         var dir = Path.Combine(bulk, $"d{d:00}");
         Directory.CreateDirectory(dir);
         for (var i = 0; i < 60; i++) Touch(Path.Combine(dir, $"f{i}.jpg"));
-        // 固定样本时间，避免 Windows 新建大量文件时的目录时间更新延迟干扰复用检查。
-        Directory.SetLastWriteTimeUtc(dir, unchangedDirectoryTime);
     }
     var lateFile = Path.Combine(keep, "扫描中途新增.jpg");
     var doomedFile = Path.Combine(keep, "14-5 白底图 旧版.jpg");
@@ -132,9 +139,16 @@ Check("搜索：名字命中排在路径命中前面", index.Search("14-5 psd", 
 
     // 快速校准：没变的目录直接沿用
     Touch(Path.Combine(bulk, "d05", "新的一张.jpg"));
-    Directory.SetLastWriteTimeUtc(Path.Combine(bulk, "d05"), unchangedDirectoryTime.AddMinutes(1));
     var quick = await index.RebuildAsync(new[] { root }, new[] { excluded }, null, CancellationToken.None, quick: true);
     Check("快速校准：发现新增文件", Hits("新的一张") == 1);
+
+    // 文件夹预览：直接子项计数 + 从子文件夹里挑图（只查索引）
+    var bulkPreview = index.FolderPreview(bulk, 3);
+    Check("文件夹预览：只有子文件夹时往下找图", bulkPreview.Samples.Count == 3 && bulkPreview.FolderCount == 40 && bulkPreview.FileCount == 0,
+        $"samples={bulkPreview.Samples.Count} folders={bulkPreview.FolderCount} files={bulkPreview.FileCount}");
+    var d05 = index.FolderPreview(Path.Combine(bulk, "d05"), 3);
+    Check("文件夹预览：最近修改的排前面", d05.Samples.Count == 3 && d05.Samples[0].Name == "新的一张.jpg" && d05.FileCount == 61, $"first={d05.Samples.FirstOrDefault()?.Name} files={d05.FileCount}");
+    Check("文件夹预览：不存在的目录返回空", index.FolderPreview(Path.Combine(root, "没有这个"), 3).Samples.Count == 0);
     Check("快速校准：沿用未变目录", quick.ReusedDirectories >= 38, $"沿用 {quick.ReusedDirectories} 个目录");
 
     // 实时监听
@@ -200,6 +214,93 @@ try
     if (cold.Any(x => x.Item2 >= 120)) Console.WriteLine($"WARN  有一次搜索超过 120 ms（{timings}），这台机器偏慢或负载高");
 }
 finally { try { File.Delete(bigIndex); } catch { } }
+
+// ================= 自动更新：update.json 解析和安装包校验 =================
+{
+    var hash = new string('a', 64);
+    bool Rejects(string json) { try { UpdateRules.Parse(json); return false; } catch (UpdateException) { return true; } }
+    var ok = UpdateRules.Parse($$"""{"Version":"1.10.1","URL":"https://github.com/x/y/SharedQuickSearch-Setup.exe","sha256":"{{hash.ToUpperInvariant()}}","size":123}""");
+    Check("更新：update.json 字段不分大小写，SHA-256 统一成小写", ok.Version == "1.10.1" && ok.Sha256 == hash && ok.Size == 123);
+    Check("更新：本机 / 共享盘路径可以当下载地址", !Rejects($$"""{"version":"1.10.1","url":"\\\\nas\\共享\\SharedQuickSearch-Setup.exe","sha256":"{{hash}}"}"""));
+    Check("更新：拒绝 http 下载地址", Rejects($$"""{"version":"1.10.1","url":"http://x/a.exe","sha256":"{{hash}}"}"""));
+    Check("更新：拒绝 ftp 之类的其它协议", Rejects($$"""{"version":"1.10.1","url":"ftp://x/a.exe","sha256":"{{hash}}"}"""));
+    Check("更新：拒绝缺 SHA-256 或长度不对", Rejects("""{"version":"1.10.1","url":"https://x/a.exe"}""") && Rejects("""{"version":"1.10.1","url":"https://x/a.exe","sha256":"abc"}"""));
+    Check("更新：拒绝坏版本号和坏 JSON", Rejects($$"""{"version":"新版","url":"https://x/a.exe","sha256":"{{hash}}"}""") && Rejects("<html>404</html>"));
+    Check("更新：拒绝超过 400 MB 的安装包", Rejects($$"""{"version":"1.10.1","url":"https://x/a.exe","sha256":"{{hash}}","size":999999999999}"""));
+
+    Check("更新：网上取的 update.json 不能指向共享盘 / 别的机器上的路径", Rejects2($$"""{"version":"1.10.1","url":"\\\\attacker\\x.exe","sha256":"{{hash}}"}"""));
+    bool Rejects2(string json) { try { UpdateRules.Parse(json, fromFileFeed: false); return false; } catch (UpdateException) { return true; } }
+    Check("更新：版本号统一成三段", UpdateRules.NormalizeVersion("1.10") == "1.10.0" && UpdateRules.NormalizeVersion("v1.10.1") == "1.10.1" && UpdateRules.NormalizeVersion("1.10.1.0") == "1.10.1");
+    Check("更新：四段版本号（第四段不是 0）不接受", UpdateRules.NormalizeVersion("1.10.1.5") is null && Rejects($$"""{"version":"1.10.1.5","url":"https://x/a.exe","sha256":"{{hash}}"}"""));
+    Check("更新：1.10.0 比 1.9.9 新，1.10 等于 1.10.0", UpdateRules.Compare("1.10.0", "1.9.9") > 0 && UpdateRules.Compare("1.10", "1.10.0") == 0);
+
+    // 发布者签名：只认程序里那把公钥签过的 update.json
+    using (var publisher = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256))
+    using (var stranger = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256))
+    {
+        var publicPem = publisher.ExportSubjectPublicKeyInfoPem();
+        var bytes = System.Text.Encoding.UTF8.GetBytes($$"""{"version":"1.10.1","url":"https://x/a.exe","sha256":"{{hash}}"}""");
+        var signature = Convert.ToBase64String(publisher.SignData(bytes, System.Security.Cryptography.HashAlgorithmName.SHA256));
+        Check("签名：发布者签的，验证通过", UpdateRules.VerifySignature(bytes, signature, publicPem));
+        Check("待更新缓存：从签名原始字节恢复版本", UpdateRules.ReadSignedManifest(bytes, signature, publicPem).Version == "1.10.1");
+        var tampered = (byte[])bytes.Clone();
+        tampered[^3] ^= 1;
+        Check("签名：update.json 改了一个字节，拒绝", !UpdateRules.VerifySignature(tampered, signature, publicPem));
+        bool pendingRejected = false;
+        try { UpdateRules.ReadSignedManifest(tampered, signature, publicPem); } catch (UpdateException) { pendingRejected = true; }
+        Check("待更新缓存：篡改清单不能在重启时绕过签名", pendingRejected);
+        var forged = Convert.ToBase64String(stranger.SignData(bytes, System.Security.Cryptography.HashAlgorithmName.SHA256));
+        Check("签名：别的钥匙签的，拒绝", !UpdateRules.VerifySignature(bytes, forged, publicPem));
+        Check("签名：没有签名、签名乱码、没有公钥，都拒绝",
+            !UpdateRules.VerifySignature(bytes, "", publicPem) && !UpdateRules.VerifySignature(bytes, "不是base64", publicPem) && !UpdateRules.VerifySignature(bytes, signature, ""));
+    }
+
+    var package = Path.Combine(Path.GetTempPath(), $"sqs-update-{Guid.NewGuid():N}.exe");
+    try
+    {
+        File.WriteAllBytes(package, System.Text.Encoding.UTF8.GetBytes("pretend installer"));
+        var realHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(package))).ToLowerInvariant();
+        var good = new UpdateManifest("1.10.1", "https://x/a.exe", realHash, new FileInfo(package).Length, null);
+        Check("更新：大小和 SHA-256 都对，校验通过", UpdateRules.VerifyContent(package, good) is null);
+        Check("更新：SHA-256 不对，拒绝", UpdateRules.VerifyContent(package, good with { Sha256 = hash }) is not null);
+        Check("更新：大小不对（没下完），拒绝", UpdateRules.VerifyContent(package, good with { Size = good.Size + 1 }) is not null);
+        Check("更新：文件不存在，拒绝", UpdateRules.VerifyContent(package + ".missing", good) is not null);
+    }
+    finally { try { File.Delete(package); } catch { } }
+}
+
+// File replacement and startup acknowledgement are tested without touching the real installation, registry or NAS.
+var transactionRoot = Path.Combine(Path.GetTempPath(), "sqs-transaction-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(transactionRoot);
+try
+{
+    var exe = Path.Combine(transactionRoot, "app.exe");
+    File.WriteAllText(exe, "old");
+    using (var transaction = new UpdateFileTransaction(exe))
+    {
+        File.WriteAllText(exe, "broken-new");
+        transaction.Rollback();
+        Check("更新回滚：恢复旧程序字节", File.ReadAllText(exe) == "old");
+    }
+    using (var transaction = new UpdateFileTransaction(exe))
+    {
+        File.WriteAllText(exe, "healthy-new");
+        transaction.Commit();
+        Check("更新提交：健康版本保留，旧备份清理", File.ReadAllText(exe) == "healthy-new" && !File.Exists(transaction.Backup));
+    }
+    using (var transaction = new UpdateFileTransaction(exe)) File.WriteAllText(exe, "failed-before-commit");
+    Check("更新回滚：异常退出事务自动恢复", File.ReadAllText(exe) == "healthy-new");
+    var absent = Path.Combine(transactionRoot, "new-app.exe");
+    using (var transaction = new UpdateFileTransaction(absent)) File.WriteAllText(absent, "broken-first-install");
+    Check("更新回滚：首次安装失败只移除新程序", !File.Exists(absent) && File.Exists(exe));
+    var token = Guid.NewGuid().ToString("N");
+    var receipt = Path.Combine(transactionRoot, $"health-{token}.json");
+    UpdateHealth.Acknowledge(receipt, token, transactionRoot, "1.10.0", 123);
+    Check("启动确认：令牌、版本、进程均匹配", UpdateHealth.Matches(receipt, token, "1.10.0", 123));
+    Check("启动确认：拒绝其它进程或版本", !UpdateHealth.Matches(receipt, token, "1.10.0", 456) && !UpdateHealth.Matches(receipt, token, "1.11.0", 123));
+    Check("启动确认：拒绝更新目录以外的路径", !UpdateHealth.IsValidLocation(Path.Combine(transactionRoot, "..", $"health-{token}.json"), token, transactionRoot));
+}
+finally { Directory.Delete(transactionRoot, recursive: true); }
 
 Console.WriteLine(failures.Count == 0 ? "ALL PASS" : $"{failures.Count} FAILED: {string.Join(", ", failures)}");
 return failures.Count == 0 ? 0 : 1;

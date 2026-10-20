@@ -100,6 +100,8 @@ public partial class SpotlightWindow : Window
         _columnsTimer.Tick += (_, _) => { _columnsTimer.Stop(); UpdateColumns(); };
         Loaded += (_, _) => _scroll = Rows.Template.FindName("PART_Scroll", Rows) as ScrollViewer;
         _host.StatusChanged += () => Dispatcher.InvokeAsync(UpdateIndexStatus);
+        InitTray();
+        UpdateTrayCount();
         UpdateIndexStatus();
         UpdateThemeGlyph();
         ThemeManager.Changed += UpdateThemeGlyph;
@@ -107,7 +109,7 @@ public partial class SpotlightWindow : Window
     }
 
     /// <summary>这个条目当前是否显示在搜索条的网格里（主窗口释放缩略图、后台精修时会问）。线程安全。</summary>
-    public bool Shows(FileEntry entry) => Array.IndexOf(Volatile.Read(ref _shown), entry) >= 0;
+    public bool Shows(FileEntry entry) => Array.IndexOf(Volatile.Read(ref _shown), entry) >= 0 || Array.IndexOf(Volatile.Read(ref _trayShown), entry) >= 0;
 
     /// <summary>索引有变化：搜索条正在显示结果就静默刷新，结果没变什么都不动。</summary>
     public async Task RefreshAsync()
@@ -228,7 +230,7 @@ public partial class SpotlightWindow : Window
         // 离开结果的条目释放缩略图（内存缓存还在，回来时瞬间显示）
         var incoming = new HashSet<FileEntry>(entries, ReferenceEqualityComparer.Instance);
         foreach (var old in _items.Select(x => x.Entry).Concat(_pendingRelease))
-            if (!incoming.Contains(old) && !_host.IsShownInMainWindow(old)) old.Thumbnail = null;
+            if (!incoming.Contains(old) && !InTray(old) && !_host.IsShownInMainWindow(old)) old.Thumbnail = null;
         _pendingRelease.Clear();
         foreach (var entry in entries)
             if (entry.Thumbnail is null && _host.Thumbnails.TryGetCached(entry, out var cached)) entry.Thumbnail = cached;
@@ -236,6 +238,12 @@ public partial class SpotlightWindow : Window
         var keepSelected = preserve ? new HashSet<string>(_items.Where(x => x.IsSelected).Select(x => x.Entry.FullPath), StringComparer.OrdinalIgnoreCase) : null;
         var keepOffset = preserve ? _scroll?.VerticalOffset ?? 0 : 0;
         _items = entries.Select((entry, i) => new TileItem(entry, i, generation, query)).ToList();
+        _plainFolders.Clear(); // 索引可能变了：没图的文件夹重新给一次机会
+        foreach (var tile in _items)
+        {
+            tile.IsCollected = InTray(tile.Entry);
+            if (tile.Entry.IsDirectory && _host.Folders.CachedInfo(tile.Entry.FullPath) is { } folderInfo) tile.Meta = FolderPreviewService.Describe(folderInfo);
+        }
         Volatile.Write(ref _shown, entries.ToArray());
 
         _tiles.Clear();
@@ -243,6 +251,7 @@ public partial class SpotlightWindow : Window
         Rows.BeginAnimation(OpacityProperty, null);
         Rows.Opacity = 1;
         Rows.Padding = new Thickness(11, recentTitle is null ? 4 : 24, 11, 12);
+        UpdateRowsPadding();
         Rows.ItemsSource = BuildRows();
         if (preserve) Dispatcher.InvokeAsync(() => ScrollTo(keepOffset, animate: false), DispatcherPriority.Loaded);
         else ScrollTo(0, animate: false);
@@ -324,11 +333,7 @@ public partial class SpotlightWindow : Window
         {
             Release();
             Rows.ItemsSource = null;
-            PanelClip.BeginAnimation(RectangleGeometry.RectProperty, null);
-            PanelShadow.BeginAnimation(HeightProperty, null);
-            PanelClip.Rect = new Rect(0, 0, _panelWidth, CollapsedHeight);
-            PanelShadow.Height = CollapsedHeight;
-            _panelHeight = CollapsedHeight;
+            SetPanelHeightNow(CollapsedHeight);
             return;
         }
         // 先淡出网格再收起，避免内容在收缩时突然消失
@@ -345,10 +350,14 @@ public partial class SpotlightWindow : Window
         AnimatePanel(CollapsedHeight);
     }
 
-    private void AnimatePanel(double target)
+    /// <param name="target">不算收集栏的高度；有收集栏时自动多留出位置。</param>
+    private void AnimatePanel(double target) => AnimatePanelRaw(WithTray(target));
+
+    private void AnimatePanelRaw(double target)
     {
-        if (Math.Abs(target - _panelHeight) < 0.5) return;
         var duration = TimeSpan.FromMilliseconds(target > _panelHeight ? 320 : 220);
+        PositionTray(target, animate: true, duration);
+        if (Math.Abs(target - _panelHeight) < 0.5) return;
         PanelClip.BeginAnimation(RectangleGeometry.RectProperty, new RectAnimation(new Rect(0, 0, _panelWidth, target), duration) { EasingFunction = Smooth });
         PanelShadow.BeginAnimation(HeightProperty, new DoubleAnimation(target, duration) { EasingFunction = Smooth });
         _panelHeight = target;
@@ -497,6 +506,10 @@ public partial class SpotlightWindow : Window
             switch (key)
             {
                 case Key.Space or Key.Escape: CloseLook(animate: true); e.Handled = true; return;
+                case Key.D when ctrl && _lookItem is { } looking:
+                    // 预览里也能收集：卡片直接出现在收集栏（预览盖着网格，不飞）
+                    if (looking.IsCollected) Uncollect(new[] { looking.Entry }); else Collect(new[] { looking }, fly: false);
+                    e.Handled = true; return;
                 case Key.Left: LookStep(-1); e.Handled = true; return;
                 case Key.Right: LookStep(1); e.Handled = true; return;
                 case Key.Up: LookStep(-_columns); e.Handled = true; return;
@@ -561,6 +574,14 @@ public partial class SpotlightWindow : Window
                 break;
             case Key.C when ctrl && SearchBox.SelectionLength == 0 && _items.Count > 0:
                 if (shift) CopyFiles(); else CopyPaths();
+                e.Handled = true;
+                break;
+            case Key.D when ctrl && _items.Count > 0:
+                // Ctrl+D：把选中的放进 / 移出收集栏
+                ToggleCollectSelected();
+                e.Handled = true;
+                break;
+            case Key.Z when ctrl && !shift && TryUndoClear():
                 e.Handled = true;
                 break;
             case Key.A when ctrl && _gridMode && _items.Count > 0:
@@ -862,31 +883,62 @@ public partial class SpotlightWindow : Window
         if (!_thumbTimer.IsEnabled) _thumbTimer.Start();
     }
 
-    private void LoadVisibleThumbnails()
+    // 这次搜索里已经算过、确实没有可预览图片的文件夹：滚动时不再反复去算
+    private readonly HashSet<string> _plainFolders = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 先加载屏幕上看得见的几行（从上到下排队），全部完成后再预取下面两行。
+    /// 以前两批一起排队，下面看不见的会和眼前的抢网络，文件夹预览（一个要 3 张小图）最吃亏。
+    /// </summary>
+    private async void LoadVisibleThumbnails()
     {
         if (_items.Count == 0 || !IsVisible || _scroll is null) return;
         var first = Math.Max(0, (int)(_scroll.VerticalOffset / RowHeight));
-        var rows = (int)Math.Ceiling(_scroll.ViewportHeight / RowHeight) + 1;
-        var last = first + rows + 2; // 往下多预取两行
+        var rows = (int)Math.Ceiling((_scroll.VerticalOffset - first * RowHeight + _scroll.ViewportHeight) / RowHeight);
+        var visible = Wanted(first, first + rows - 1);
+        var ahead = Wanted(first + rows, first + rows + 1); // 往下多预取两行
+        _thumbCts?.Cancel();
+        if (visible.Count == 0 && ahead.Count == 0) return;
+        var cancellation = _thumbCts = new CancellationTokenSource();
+        var token = cancellation.Token;
+
+        var loads = visible.Select(entry => LoadThumbnailAsync(entry, token)).ToList();
+        if (ahead.Count == 0) return;
+        await Task.WhenAll(loads); // LoadThumbnailAsync 自己吞掉异常
+        if (token.IsCancellationRequested) return;
+        foreach (var entry in ahead)
+            if (entry.Thumbnail is null) _ = LoadThumbnailAsync(entry, token);
+    }
+
+    private List<FileEntry> Wanted(int firstRow, int lastRow)
+    {
         var wanted = new List<FileEntry>();
-        for (var row = first; row <= last; row++)
+        for (var row = firstRow; row <= lastRow; row++)
             for (var col = 0; col < _columns; col++)
             {
                 var index = row * _columns + col;
-                if (index >= _items.Count) break;
-                if (_items[index].Entry.Thumbnail is null) wanted.Add(_items[index].Entry);
+                if (index >= _items.Count) return wanted;
+                var entry = _items[index].Entry;
+                if (entry.Thumbnail is null && !(entry.IsDirectory && _plainFolders.Contains(entry.FullPath))) wanted.Add(entry);
             }
-        _thumbCts?.Cancel();
-        if (wanted.Count == 0) return;
-        var cancellation = _thumbCts = new CancellationTokenSource();
-        foreach (var entry in wanted) _ = LoadThumbnailAsync(entry, cancellation.Token);
+        return wanted;
     }
 
     private async Task LoadThumbnailAsync(FileEntry entry, CancellationToken cancellationToken)
     {
         try
         {
-            var image = await _host.Thumbnails.LoadAsync(entry, cancellationToken);
+            BitmapSource? image;
+            if (entry.IsDirectory)
+            {
+                // 文件夹：用索引里它最近的几张图拼一张预览，顺便把卡片第二行换成“23 个文件”
+                var (folderImage, info) = await _host.Folders.LoadAsync(entry, cancellationToken);
+                var description = FolderPreviewService.Describe(info);
+                foreach (var tile in _items) if (ReferenceEquals(tile.Entry, entry)) tile.Meta = description;
+                if (folderImage is null && !cancellationToken.IsCancellationRequested) _plainFolders.Add(entry.FullPath);
+                image = folderImage;
+            }
+            else image = await _host.Thumbnails.LoadAsync(entry, cancellationToken);
             if (cancellationToken.IsCancellationRequested || image is null) return;
             if (!Shows(entry) && !_host.IsShownInMainWindow(entry)) return;
             entry.Thumbnail = image;
@@ -1020,9 +1072,14 @@ public partial class SpotlightWindow : Window
         try
         {
             if (delayMs > 0) await Task.Delay(delayMs, cancellation.Token);
-            if (FileTypes.Images.Contains(entry.Extension))
-                image = (await _host.Thumbnails.LoadPreviewImageAsync(entry.FullPath, 1600, cancellation.Token)).Image;
-            image ??= await _host.Thumbnails.LoadShellPreviewAsync(entry.FullPath, 1024, cancellation.Token);
+            if (entry.IsDirectory)
+                image = (await _host.Folders.LoadAsync(entry, cancellation.Token, 640)).Image; // 文件夹：大尺寸的拼图预览，不让 Windows 去遍历共享盘
+            else
+            {
+                if (FileTypes.Images.Contains(entry.Extension))
+                    image = (await _host.Thumbnails.LoadPreviewImageAsync(entry.FullPath, 1600, cancellation.Token)).Image;
+                image ??= await _host.Thumbnails.LoadShellPreviewAsync(entry.FullPath, 1024, cancellation.Token);
+            }
         }
         catch (OperationCanceledException) { return; }
         catch { }

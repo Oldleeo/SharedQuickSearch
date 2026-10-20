@@ -365,7 +365,7 @@
                                 <TextBlock Text="使用教学 · 3 / 5" Style="{StaticResource FlowEyebrow}"/>
                                 <TextBlock Text="拖出去就是复制一份" Style="{StaticResource FlowTitle}" FontSize="23"/>
                                 <TextBlock Style="{StaticResource FlowLead}" Text="拖到桌面、文件夹、微信、PS 都行。共享盘上的原文件永远留在原地，按着 Shift 拖也不会变成移动。"/>
-                                <TextBlock Style="{StaticResource FlowItemHint}" Margin="0,14,0,0" Text="Ctrl 点选、Shift 连选，选中的可以一起拖。不想拖就按 Ctrl+Shift+C 复制文件，到别处 Ctrl+V 粘贴。"/>
+                                <TextBlock Style="{StaticResource FlowItemHint}" Margin="0,14,0,0" Text="要从好几个 SKU 里各拿几张：中键点一下就放进下方的收集栏，换个 SKU 继续搜，最后一起复制或拖出。不想拖就按 Ctrl+Shift+C 复制。"/>
                             </StackPanel>
                         </Grid>
 

@@ -29,6 +29,8 @@ public sealed class AppSettings
     public List<string> RecentFiles { get; set; } = new();
     /// <summary>首次引导（添加共享盘目录、排除文件夹、选项）是否完成。</summary>
     public bool OnboardingDone { get; set; }
+    /// <summary>更新源：空 = GitHub Releases；也可以填自己服务器上 update.json 的 https 地址，或共享盘上的 update.json 路径。</summary>
+    public string UpdateFeed { get; set; } = "";
 
     public AppSettings Clone() => new()
     {
@@ -52,7 +54,8 @@ public sealed class AppSettings
         ClipboardPrefill = ClipboardPrefill,
         RecentQueries = RecentQueries.ToList(),
         RecentFiles = RecentFiles.ToList(),
-        OnboardingDone = OnboardingDone
+        OnboardingDone = OnboardingDone,
+        UpdateFeed = UpdateFeed
     };
 }
 

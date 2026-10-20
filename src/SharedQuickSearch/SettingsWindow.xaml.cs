@@ -45,7 +45,7 @@ public partial class SettingsWindow : Window
         SpotlightCheck.IsChecked = _source.LaunchMode != "Window";
         ClipboardCheck.IsChecked = _source.ClipboardPrefill;
         HotkeyBox.Text = string.IsNullOrWhiteSpace(_source.GlobalHotkey) ? "Ctrl+Alt+Space" : _source.GlobalHotkey;
-        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.8.0");
+        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.10.0");
         VersionText.Text = version;
         NavVersionText.Text = version;
 
@@ -61,6 +61,14 @@ public partial class SettingsWindow : Window
         CacheFolderText.Text = thumbnails?.CacheFolder ?? ThumbnailService.DefaultFolder;
         var limitItem = CacheLimitBox.Items.OfType<ComboBoxItem>().FirstOrDefault(x => x.Tag as string == _source.ThumbnailCacheLimitMb.ToString());
         CacheLimitBox.SelectedItem = limitItem ?? CacheLimitBox.Items[2];
+
+        UpdateFeedBox.Text = _source.UpdateFeed;
+        if (UpdateService.Instance is { } updates)
+        {
+            updates.Changed += ShowUpdateStatus;
+            Closed += (_, _) => updates.Changed -= ShowUpdateStatus;
+        }
+        ShowUpdateStatus();
 
         NavIndex.IsChecked = true;
         DataContext = this;
@@ -96,6 +104,31 @@ public partial class SettingsWindow : Window
         PageScroll.ScrollToTop();
         if (!_loading) Ui.FadeIn(pages[index], offsetY: 10, milliseconds: 240);
         if (index == 4) _ = RefreshThumbnailInfoAsync();
+    }
+
+    // ================= 自动更新 =================
+
+    private void ShowUpdateStatus()
+    {
+        if (!Dispatcher.CheckAccess()) { Dispatcher.InvokeAsync(ShowUpdateStatus); return; }
+        var updates = UpdateService.Instance;
+        UpdateStatusText.Text = updates is null ? "更新服务没有启动" : $"当前 {UpdateService.CurrentVersion} · {updates.StatusText}";
+        UpdateCheckButton.IsEnabled = updates is not null && updates.Stage is not (UpdateStage.Checking or UpdateStage.Downloading);
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (UpdateService.Instance is not { } updates) return;
+        // 手动检查用框里现在写的更新源（还没点保存也算）；检查完恢复
+        var feed = UpdateFeedBox.Text.Trim();
+        if (feed.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            ModernDialog.Show(this, "更新源必须是 https 地址或文件路径，不接受 http。", "更新源", MessageBoxImage.Warning);
+            return;
+        }
+        UpdateCheckButton.IsEnabled = false;
+        await updates.CheckAsync(manual: true, feedOverride: feed);
+        ShowUpdateStatus();
     }
 
     // ================= 缩略图 =================
@@ -244,6 +277,13 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        if (UpdateFeedBox.Text.Trim().StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            SelectPage(3);
+            ModernDialog.Show(this, "更新源必须是 https 地址或文件路径，不接受 http。", "更新源", MessageBoxImage.Warning);
+            return;
+        }
+
         var autoStart = AutoStartCheck.IsChecked == true;
         if (!StartupManager.SetEnabled(autoStart))
         {
@@ -262,6 +302,7 @@ public partial class SettingsWindow : Window
         SavedSettings.ClipboardPrefill = ClipboardCheck.IsChecked == true;
         SavedSettings.Theme = _selectedTheme;
         SavedSettings.ThumbnailPrefetch = PrefetchCheck.IsChecked == true;
+        SavedSettings.UpdateFeed = UpdateFeedBox.Text.Trim();
         if (CacheLimitBox.SelectedItem is ComboBoxItem { Tag: string limit } && int.TryParse(limit, out var megabytes)) SavedSettings.ThumbnailCacheLimitMb = megabytes;
         DialogResult = true;
     }

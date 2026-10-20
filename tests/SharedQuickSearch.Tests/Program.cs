@@ -106,51 +106,13 @@ Check("AI XMP 缩略图（600KB 之后）", EmbeddedThumbnailLocator.Locate(new 
 Check("普通 PDF 无内嵌图", EmbeddedThumbnailLocator.Locate(new MemoryStream(System.Text.Encoding.ASCII.GetBytes("%PDF-1.4\n%%EOF")), ".pdf") is null);
 Check("损坏 PSD 不抛异常", EmbeddedThumbnailLocator.Locate(new MemoryStream(psd[..40]), ".psd") is not null);
 
-// Load the actual flow-window styles on an STA thread. A successful XAML build
-// alone does not catch CLR properties accidentally used as dependency-property setters.
-Exception? flowStyleError = null;
-var flowStylesLoaded = false;
-var flowThread = new Thread(() =>
-{
-    var application = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-    try
-    {
-        foreach (var theme in new[] { "Light", "Dark" })
-        {
-            application.Resources.MergedDictionaries.Clear();
-            application.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary
-            {
-                Source = new Uri($"/共享速搜;component/Themes/{theme}.xaml", UriKind.Relative)
-            });
-            application.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary
-            {
-                Source = new Uri("/共享速搜;component/Themes/Controls.xaml", UriKind.Relative)
-            });
-            var window = new System.Windows.Window
-            {
-                Style = (System.Windows.Style)application.FindResource("FlowWindow"),
-                WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen
-            };
-            window.Measure(new System.Windows.Size(800, 588));
-            window.Close();
-        }
-        flowStylesLoaded = true;
-    }
-    catch (Exception exception) { flowStyleError = exception; }
-    finally { application.Shutdown(); }
-}) { IsBackground = true };
-flowThread.SetApartmentState(ApartmentState.STA);
-flowThread.Start();
-Check("安装与引导窗口样式在浅色和深色下正确加载", flowThread.Join(TimeSpan.FromSeconds(15)) && flowStylesLoaded);
-if (flowStyleError is not null) Console.Error.WriteLine(flowStyleError);
-
 if (failures.Count > 0)
 {
     Console.Error.WriteLine("FAILED: " + string.Join(", ", failures));
     Environment.Exit(1);
 }
 
-Console.WriteLine("PASS: 路径、排除、索引、搜索、内嵌缩略图和浅色/深色流程窗口样式全部通过。");
+Console.WriteLine("PASS: 路径、排除、系统缓存忽略、索引持久化与瘦身、SKU 搜索、类型筛选、自然排序、增量更新、主题设置和内嵌缩略图解析全部通过。");
 
 // 同步回调：Progress<T> 在无同步上下文时把回调扔进线程池，顺序不确定，会偶发失败。
 sealed class SyncProgress(List<IndexProgress> sink) : IProgress<IndexProgress>

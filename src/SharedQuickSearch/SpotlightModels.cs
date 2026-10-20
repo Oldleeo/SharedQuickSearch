@@ -19,6 +19,8 @@ public abstract class Observable : INotifyPropertyChanged
 public sealed class TileItem : Observable
 {
     private bool _isSelected;
+    private bool _isCollected;
+    private string _meta;
 
     public TileItem(FileEntry entry, int index, int generation, ParsedQuery query)
     {
@@ -26,7 +28,7 @@ public sealed class TileItem : Observable
         Index = index;
         Generation = generation;
         (Pre, Hit, Post) = Highlight(entry.Name, query);
-        Meta = entry.IsDirectory
+        _meta = entry.IsDirectory
             ? (entry.LastWriteUtc == DateTime.MinValue ? "文件夹" : $"文件夹 · {entry.LastWriteUtc.ToLocalTime():MM-dd}")
             : $"{entry.SizeLabel} · {(entry.LastWriteUtc == DateTime.MinValue ? "—" : entry.LastWriteUtc.ToLocalTime().ToString("MM-dd"))}";
     }
@@ -37,8 +39,11 @@ public sealed class TileItem : Observable
     public string Pre { get; }
     public string Hit { get; }
     public string Post { get; }
-    public string Meta { get; }
+    /// <summary>卡片第二行：大小 · 日期；文件夹的预览算出来后换成“23 个文件 · 日期”。</summary>
+    public string Meta { get => _meta; set => Set(ref _meta, value); }
     public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value); }
+    /// <summary>已经放进下方收集栏。</summary>
+    public bool IsCollected { get => _isCollected; set => Set(ref _isCollected, value); }
 
     private static (string, string, string) Highlight(string name, ParsedQuery query)
     {
@@ -78,4 +83,14 @@ public sealed class TokenChip
     public string Label { get; }
     public QueryToken? Token { get; }
     public bool IsClipboard { get; }
+}
+
+/// <summary>收集栏里的一张卡片。跨多次搜索保留，直到复制 / 拖出后你自己清空。</summary>
+public sealed class TrayItem
+{
+    public TrayItem(FileEntry entry) { Entry = entry; }
+    public FileEntry Entry { get; }
+    /// <summary>刚加进来、还在等飞过来的动画落地：先不显示。</summary>
+    public bool Arriving { get; set; }
+    public string Tip => Entry.Name + "\n" + Entry.ParentPath;
 }

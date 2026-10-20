@@ -16,7 +16,8 @@ public static partial class PathRules
             return value.Length > 1 ? value.TrimEnd('/') : value;
         }
 
-        value = value.Replace('／', '\\').Replace('/', '\\').Replace('＼', '\\');
+        // 只换真正的分隔符。全角的 ／ ＼ 在 Windows 文件名里是合法字符，中文命名常用，不能动
+        value = value.Replace('/', '\\');
         if (value.StartsWith("\\"))
         {
             value = @"\\" + RepeatedSlash().Replace(value.TrimStart('\\'), @"\");
