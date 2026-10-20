@@ -138,7 +138,12 @@ Check("搜索：名字命中排在路径命中前面", index.Search("14-5 psd", 
     Check("并发：扫描中途删除的文件不在索引里", !index.Search("旧版", SearchCategory.All, 100).Any(x => x.FullPath.EndsWith("旧版.jpg")));
 
     // 快速校准：没变的目录直接沿用
+    // Keep this test independent of deferred NTFS timestamp updates from the preceding concurrent-write test.
+    var directoryBaseline = new DateTime(2025, 1, 2, 12, 0, 0, DateTimeKind.Utc);
+    foreach (var directory in Directory.EnumerateDirectories(bulk)) Directory.SetLastWriteTimeUtc(directory, directoryBaseline);
+    await index.RebuildAsync(new[] { root }, new[] { excluded }, null, CancellationToken.None);
     Touch(Path.Combine(bulk, "d05", "新的一张.jpg"));
+    Directory.SetLastWriteTimeUtc(Path.Combine(bulk, "d05"), directoryBaseline.AddMinutes(1));
     var quick = await index.RebuildAsync(new[] { root }, new[] { excluded }, null, CancellationToken.None, quick: true);
     Check("快速校准：发现新增文件", Hits("新的一张") == 1);
 
