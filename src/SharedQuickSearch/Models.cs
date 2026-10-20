@@ -58,6 +58,10 @@ public static partial class FileTypes
     public static readonly HashSet<string> Text = new(StringComparer.OrdinalIgnoreCase)
         { ".txt", ".md", ".csv", ".json", ".xml", ".log", ".ini", ".yaml", ".yml" };
 
+    /// <summary>能读出预览图的格式（文件夹预览拼图从这些文件里挑）。视频、Office 走 Shell 太慢，不算。</summary>
+    public static bool HasVisualPreview(string extension) =>
+        Images.Contains(extension) || extension.ToLowerInvariant() is ".psd" or ".psb" or ".ai" or ".eps" or ".pdf" or ".indd";
+
     public static bool Matches(FileEntry item, SearchCategory category) => category switch
     {
         SearchCategory.Images => !item.IsDirectory && Images.Contains(item.Extension),

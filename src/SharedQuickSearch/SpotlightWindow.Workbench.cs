@@ -156,7 +156,7 @@ public partial class SpotlightWindow
     {
         var target = Math.Clamp(Math.Floor(available - 16 - 16 - 24), 320, MaxExpandedHeight);
         if (!force && Math.Abs(target - _expandedHeight) < 0.5) return;
-        var wasExpanded = _panelHeight > EmptyHeight + 0.5;
+        var wasExpanded = _panelBase > EmptyHeight + 0.5;
         _expandedHeight = target;
         PanelRoot.Height = target;
         Height = target + 60;
@@ -165,6 +165,8 @@ public partial class SpotlightWindow
 
     private void SetPanelHeightNow(double height)
     {
+        height = WithTray(height);
+        PositionTray(height, animate: false);
         PanelClip.BeginAnimation(RectangleGeometry.RectProperty, null);
         PanelShadow.BeginAnimation(HeightProperty, null);
         PanelClip.Rect = new Rect(0, 0, _panelWidth, height);
@@ -509,7 +511,9 @@ public partial class SpotlightWindow
         DetailType.Text = entry.TypeLabel;
         DetailDims.Text = entry.Width > 0 ? entry.ResolutionLabel : entry.DurationSeconds > 0 ? entry.DurationLabel : "—";
         DetailDimsLabel.Text = entry.Width > 0 ? "尺寸" : entry.DurationSeconds > 0 ? "时长" : "尺寸";
-        DetailSize.Text = entry.IsDirectory ? "—" : entry.SizeLabel;
+        DetailSize.Text = entry.IsDirectory
+            ? (_host.Folders.CachedInfo(entry.FullPath) is { } folderInfo ? FolderPreviewService.Describe(folderInfo) : "—")
+            : entry.SizeLabel;
         DetailModified.Text = entry.LastWriteUtc == DateTime.MinValue ? "—" : entry.LastWriteUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
         DetailPath.Text = entry.ParentPath + (entry.IsOffline ? "  ·  离线快照" : "");
         DetailOpenButton.Content = entry.IsDirectory ? "打开文件夹" : "打开";
@@ -529,10 +533,26 @@ public partial class SpotlightWindow
     private async Task LoadDetailImageAsync()
     {
         var entry = _detailEntry;
-        if (entry is null || entry.IsDirectory || !_workbench) return;
+        if (entry is null || !_workbench) return;
         _detailCts?.Cancel();
         var cancellation = _detailCts = new CancellationTokenSource();
         BitmapSource? image = null;
+        if (entry.IsDirectory)
+        {
+            // 文件夹：大一点的拼图预览 + 里面有多少东西
+            try
+            {
+                var (folderImage, info) = await _host.Folders.LoadAsync(entry, cancellation.Token, 512);
+                if (cancellation.IsCancellationRequested || !ReferenceEquals(_detailEntry, entry)) return;
+                DetailSize.Text = FolderPreviewService.Describe(info);
+                if (folderImage is null) return;
+                _detailHiRes = true;
+                DetailImage.Source = folderImage;
+                DetailGlyph.Visibility = Visibility.Collapsed;
+            }
+            catch { }
+            return;
+        }
         try
         {
             if (FileTypes.Images.Contains(entry.Extension))

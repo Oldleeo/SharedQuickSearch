@@ -54,6 +54,8 @@ public partial class MainWindow : Window
     public AppSettings SettingsData { get; private set; }
     public FileIndexService Index => _index;
     public ThumbnailService Thumbnails => _thumbnailService;
+    /// <summary>文件夹缩略图：用索引里的图拼出来，不让 Windows 遍历共享盘。</summary>
+    public FolderPreviewService Folders { get; }
 
     private SpotlightWindow? _spotlight;
     private SpotlightWindow Spotlight => _spotlight ??= new SpotlightWindow(this);
@@ -75,6 +77,8 @@ public partial class MainWindow : Window
         }
 
         _thumbnailService = new ThumbnailService(SettingsData.ThumbnailCacheLimitMb) { PrefetchEnabled = SettingsData.ThumbnailPrefetch };
+
+        Folders = new FolderPreviewService(_index, _thumbnailService);
         _thumbnailService.Refined += (entry, image) => Dispatcher.InvokeAsync(() =>
         {
             // 低清内嵌图精修完成：只替换还在界面上的条目
@@ -142,6 +146,8 @@ public partial class MainWindow : Window
         InitializeTray();
         RegisterGlobalHotkey(showFailure: false);
         _ = InitializeDataAsync();
+        _updates = new UpdateService(() => SettingsData.UpdateFeed, CanApplyUpdateNow, ApplyUpdate);
+        _updates.Start();
     }
 
     /// <summary>开机启动：只建窗口句柄（托盘、快捷键需要），不显示窗口。</summary>
@@ -224,6 +230,7 @@ public partial class MainWindow : Window
         _quickReconcileTimer.Stop();
         _recentSaveTimer.Stop();
         _prefetchTimer.Stop();
+        _updates?.Dispose();
         _thumbnailService.Dispose();
         _index.Dispose(); // 把还没写盘的增量变化存下来
         _spotlight?.CloseForExit();
@@ -235,6 +242,60 @@ public partial class MainWindow : Window
         try { SettingsStore.Save(SettingsData); } catch { }
         // 应用是显式退出模式：主窗口真正关闭就结束进程
         Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
+    }
+
+    // ================= 自动更新 =================
+
+    private UpdateService? _updates;
+
+    /// <summary>
+    /// 什么时候可以重启换版本：搜索条收起、收集栏是空的、没在拖文件、没有设置之类的窗口开着、没在完整扫描。
+    /// 用户离开电脑超过 10 分钟时，只要没在拖文件、没有对话框，就直接更新。
+    /// 收集栏里有东西时永远不更新：它不存盘，重启就没了。
+    /// </summary>
+    private bool CanApplyUpdateNow()
+    {
+        if (_spotlight is { IsDraggingOut: true } or { HasCollected: true }) return false;
+        var otherWindows = Application.Current.Windows.OfType<Window>()
+            .Any(x => x.IsVisible && !ReferenceEquals(x, this) && !ReferenceEquals(x, _spotlight));
+        if (otherWindows) return false;
+        if (IdleTime() >= TimeSpan.FromMinutes(10)) return true;
+        return !IsVisible && _spotlight is not { IsVisible: true } && (!IsIndexing || _silentRebuild);
+    }
+
+    private void ApplyUpdate(UpdateManifest manifest, string path)
+    {
+        try { _trayIcon?.ShowBalloonTip(2500, $"正在更新到 {manifest.Version}", "几秒后自动重新打开，不用管它。", Forms.ToolTipIcon.None); } catch { }
+        App.StartUpdater(path, show: false);
+        ExitApplication();
+    }
+
+    /// <summary>刚被自动更新换上来：托盘提示一下。</summary>
+    public void NotifyUpdated(string fromVersion)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            try
+            {
+                _trayIcon?.ShowBalloonTip(4000, $"共享速搜已更新到 {UpdateService.CurrentVersion}",
+                    $"按 {SettingsData.GlobalHotkey} 呼出。设置 → 关于 里可以看到更新状态。", Forms.ToolTipIcon.None);
+            }
+            catch { }
+        }, DispatcherPriority.ApplicationIdle);
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct LastInputInfo { public uint Size; public uint Time; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LastInputInfo info);
+
+    /// <summary>距离上一次键盘 / 鼠标操作多久了（整台电脑，不只是这个软件）。</summary>
+    private static TimeSpan IdleTime()
+    {
+        var info = new LastInputInfo { Size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<LastInputInfo>() };
+        if (!GetLastInputInfo(ref info)) return TimeSpan.Zero;
+        return TimeSpan.FromMilliseconds(unchecked((uint)Environment.TickCount - info.Time));
     }
 
     private bool _trayTipShown;

@@ -80,7 +80,7 @@
         <DataTemplate x:Key="TileTemplate" DataType="{x:Type local:TileItem}">
             <Grid x:Name="Tile" Margin="7,6,7,0" Background="Transparent" Cursor="Hand" Tag="{Binding}"
                   MouseLeftButtonDown="Tile_MouseLeftButtonDown" MouseMove="Tile_MouseMove" MouseLeftButtonUp="Tile_MouseLeftButtonUp"
-                  MouseRightButtonUp="Tile_MouseRightButtonUp" Loaded="Tile_Loaded" Unloaded="Tile_Unloaded">
+                  MouseRightButtonUp="Tile_MouseRightButtonUp" MouseDown="Tile_MouseDown" Loaded="Tile_Loaded" Unloaded="Tile_Unloaded">
                 <Grid.RenderTransform><TranslateTransform/></Grid.RenderTransform>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="150"/>
@@ -114,6 +114,13 @@
                                 <TextBlock Text="拖出即复制" FontSize="11" FontWeight="Medium" Foreground="White"/>
                             </StackPanel>
                         </Border>
+                        <!-- 已放进收集栏：右下角一个小标记 -->
+                        <Border x:Name="Collected" Width="22" Height="22" CornerRadius="11" Margin="7" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                Background="{DynamicResource AccentBrush}" BorderBrush="{DynamicResource SpotlightPanelBrush}" BorderThickness="2"
+                                Opacity="0" RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+                            <Border.RenderTransform><ScaleTransform ScaleX="0.4" ScaleY="0.4"/></Border.RenderTransform>
+                            <TextBlock Text="&#xE719;" Style="{StaticResource Icon}" FontSize="9.5" Foreground="White"/>
+                        </Border>
                         <!-- 复制成功时闪一下 -->
                         <Border x:Name="Flash" CornerRadius="11" Background="#D92457E6" Opacity="0" IsHitTestVisible="False">
                             <TextBlock Text="&#xE73E;" Style="{StaticResource Icon}" FontSize="30" Foreground="White"/>
@@ -128,6 +135,20 @@
                 <TextBlock Grid.Row="2" Margin="2,2,2,0" FontSize="10.5" FontFamily="{StaticResource MonoFont}" Foreground="{DynamicResource TextTertiaryBrush}" Text="{Binding Meta}"/>
             </Grid>
             <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsCollected}" Value="True">
+                    <DataTrigger.EnterActions><BeginStoryboard><Storyboard>
+                        <DoubleAnimation Storyboard.TargetName="Collected" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.16"/>
+                        <DoubleAnimation Storyboard.TargetName="Collected" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.34">
+                            <DoubleAnimation.EasingFunction><BackEase EasingMode="EaseOut" Amplitude="0.5"/></DoubleAnimation.EasingFunction></DoubleAnimation>
+                        <DoubleAnimation Storyboard.TargetName="Collected" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.34">
+                            <DoubleAnimation.EasingFunction><BackEase EasingMode="EaseOut" Amplitude="0.5"/></DoubleAnimation.EasingFunction></DoubleAnimation>
+                    </Storyboard></BeginStoryboard></DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions><BeginStoryboard><Storyboard>
+                        <DoubleAnimation Storyboard.TargetName="Collected" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/>
+                        <DoubleAnimation Storyboard.TargetName="Collected" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.4" Duration="0:0:0.14"/>
+                        <DoubleAnimation Storyboard.TargetName="Collected" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.4" Duration="0:0:0.14"/>
+                    </Storyboard></BeginStoryboard></DataTrigger.ExitActions>
+                </DataTrigger>
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter TargetName="Ring" Property="Opacity" Value="1"/>
                     <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
@@ -364,7 +385,9 @@
                             <Border Style="{StaticResource Kbd}"><TextBlock Text="↵" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}"/></Border>
                             <TextBlock Text="所在位置" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="6,0,14,0" VerticalAlignment="Center"/>
                             <Border Style="{StaticResource Kbd}"><TextBlock Text="双击" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}"/></Border>
-                            <TextBlock Text="打开" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="打开" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="6,0,14,0" VerticalAlignment="Center"/>
+                            <Border Style="{StaticResource Kbd}"><TextBlock Text="中键" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}"/></Border>
+                            <TextBlock Text="收集" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" Margin="6,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel x:Name="FooterStatus" Orientation="Horizontal" Opacity="0" Visibility="Collapsed" HorizontalAlignment="Right">
                             <TextBlock Text="&#xE73E;" Style="{StaticResource Icon}" FontSize="12" Foreground="{DynamicResource AccentBrush}" Margin="0,0,7,0"/>
@@ -372,7 +395,92 @@
                         </StackPanel>
                     </Grid>
                 </Grid>
+
+                <!-- 搜索条收起、只留收集栏时：盖住下面的分类和网格，只露出搜索框和收集栏 -->
+                <Border x:Name="CollapsedCover" Grid.Row="1" Grid.RowSpan="3" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Visibility="Collapsed">
+                    <Border.Background><SolidColorBrush Color="{DynamicResource SpotlightPanelColor}"/></Border.Background>
+                </Border>
             </Grid>
+
+            <!-- 收集栏：中键点过的文件跨多次搜索攒在这里，最后一起复制或拖出 -->
+            <Border x:Name="Tray" HorizontalAlignment="Center" VerticalAlignment="Top" Height="92" CornerRadius="16"
+                    Background="{DynamicResource SpotlightPanelBrush}" BorderBrush="{DynamicResource SpotlightStrokeBrush}" BorderThickness="1"
+                    Visibility="Collapsed" Opacity="0">
+                <Border.RenderTransform><TranslateTransform x:Name="TrayShift"/></Border.RenderTransform>
+                <Border.Effect><DropShadowEffect BlurRadius="26" ShadowDepth="8" Direction="270" Opacity="0.22" Color="#000000" RenderingBias="Performance"/></Border.Effect>
+                <Grid Margin="16,0,10,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,14,0" MinWidth="44">
+                        <TextBlock x:Name="TrayCount" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Left"
+                                   RenderTransformOrigin="0.5,0.5">
+                            <TextBlock.RenderTransform><ScaleTransform x:Name="TrayCountScale"/></TextBlock.RenderTransform>
+                        </TextBlock>
+                        <TextBlock Text="已收集" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,1,0,0"/>
+                    </StackPanel>
+                    <ScrollViewer x:Name="TrayScroll" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" Focusable="False"
+                                  PreviewMouseWheel="TrayScroll_PreviewMouseWheel" VerticalAlignment="Center">
+                        <ItemsControl x:Name="TrayList" Focusable="False">
+                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type local:TrayItem}">
+                                    <Grid x:Name="Card" Width="70" Height="70" Background="Transparent" Cursor="Hand" Tag="{Binding}" ToolTip="{Binding Tip}"
+                                          ClipToBounds="False" Loaded="TrayCard_Loaded"
+                                          MouseLeftButtonDown="TrayCard_MouseLeftButtonDown" MouseMove="TrayCard_MouseMove" MouseLeftButtonUp="TrayCard_MouseLeftButtonUp"
+                                          MouseDown="TrayCard_MouseDown" MouseRightButtonUp="TrayCard_MouseRightButtonUp">
+                                        <Border x:Name="CardBody" Width="62" Height="62" CornerRadius="11" Background="{DynamicResource SpotlightTileBrush}"
+                                                RenderTransformOrigin="0.5,0.5">
+                                            <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                                            <Grid>
+                                                <TextBlock x:Name="CardGlyph" Text="{Binding Entry.IconGlyph}" Style="{StaticResource Icon}" FontSize="22" Foreground="{Binding Entry.TypeBrush}"/>
+                                                <Image Source="{Binding Entry.Thumbnail}" Margin="5" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                <Border CornerRadius="4" Background="{Binding Entry.TypeBrush}" Padding="4,1" Margin="4" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                                        x:Name="CardBadge">
+                                                    <TextBlock Text="{Binding Entry.ExtensionLabel}" FontFamily="{StaticResource MonoFont}" FontSize="7.5" FontWeight="SemiBold" Foreground="White"/>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                        <Border x:Name="CardRemove" Width="18" Height="18" CornerRadius="9" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,1,1,0"
+                                                Background="{DynamicResource TextPrimaryBrush}" Opacity="0" Cursor="Hand" MouseLeftButtonDown="TrayCardRemove_MouseLeftButtonDown"
+                                                ToolTip="移出收集栏（或中键点卡片）">
+                                            <TextBlock Text="&#xE711;" Style="{StaticResource Icon}" FontSize="7.5" Foreground="{DynamicResource SpotlightPanelBrush}"/>
+                                        </Border>
+                                    </Grid>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding Entry.HasThumbnail}" Value="True"><Setter TargetName="CardGlyph" Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                        <DataTrigger Binding="{Binding Entry.IsDirectory}" Value="True"><Setter TargetName="CardBadge" Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                        <Trigger SourceName="Card" Property="IsMouseOver" Value="True">
+                                            <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="CardRemove" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.14"/>
+                                            </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                            <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="CardRemove" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/>
+                                            </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                        </Trigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                        <Border x:Name="TrayDrag" Height="40" CornerRadius="10" Padding="13,0" Margin="0,0,8,0" Background="{DynamicResource AccentSoftBrush}"
+                                BorderBrush="{DynamicResource SelectedStrokeBrush}" BorderThickness="1" Cursor="Hand"
+                                MouseLeftButtonDown="TrayDrag_MouseLeftButtonDown" MouseMove="TrayDrag_MouseMove" MouseLeftButtonUp="TrayDrag_MouseLeftButtonUp"
+                                ToolTip="按住拖到任意位置：把收集栏里的文件全部复制过去">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE76F;" Style="{StaticResource Icon}" FontSize="12" Foreground="{DynamicResource AccentBrush}" Margin="0,0,7,0"/>
+                                <TextBlock Text="拖出全部" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}"/>
+                            </StackPanel>
+                        </Border>
+                        <Button x:Name="TrayCopyButton" Style="{StaticResource PrimaryButton}" Height="40" Padding="15,0" Margin="0,0,4,0" Focusable="False"
+                                Click="TrayCopy_Click" Content="复制全部" ToolTip="复制收集栏里的全部文件，到别处直接粘贴"/>
+                        <Button Style="{StaticResource IconButton}" Width="36" Height="36" Content="&#xE74D;" FontSize="13" Focusable="False"
+                                Click="TrayClear_Click" ToolTip="清空收集栏（Ctrl+Z 撤销）"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- 飞向收集栏的卡片在这一层画，不挡鼠标 -->
+            <Canvas x:Name="FlyLayer" IsHitTestVisible="False" ClipToBounds="False"/>
 
             <!-- 工作台模式：右下角拖动改大小 -->
             <Thumb x:Name="ResizeGrip" Width="18" Height="18" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4" Cursor="SizeNWSE"

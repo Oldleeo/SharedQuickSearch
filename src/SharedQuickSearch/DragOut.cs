@@ -102,11 +102,11 @@ internal static class DragOut
                 var rect = new Rect(14, 14, width - 28, height - 34);
                 dc.DrawRoundedRectangle(shadow, null, new Rect(rect.X + 2, rect.Y + 4, rect.Width, rect.Height), 12, 12);
                 dc.DrawRoundedRectangle(Brushes.White, new Pen(new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)), 1), rect, 12, 12);
-                var image = entries[i].Thumbnail;
-                if (image is not null)
+                var thumbnail = entries[i].Thumbnail;
+                if (thumbnail is not null)
                 {
-                    var inner = Fit(image.PixelWidth, image.PixelHeight, new Rect(rect.X + 8, rect.Y + 8, rect.Width - 16, rect.Height - 16));
-                    dc.DrawImage(image, inner);
+                    var inner = Fit(thumbnail.PixelWidth, thumbnail.PixelHeight, new Rect(rect.X + 8, rect.Y + 8, rect.Width - 16, rect.Height - 16));
+                    dc.DrawImage(thumbnail, inner);
                 }
                 dc.Pop();
             }
@@ -138,7 +138,7 @@ internal static class DragOut
         Marshal.Copy(pixels, 0, bits, pixels.Length);
 
         var helper = (IDragSourceHelper)new DragDropHelper();
-        var dragImage = new ShDragImage
+        var image = new ShDragImage
         {
             sizeDragImage = new NativeSize { cx = width, cy = height },
             ptOffset = new NativePoint { x = (int)Math.Clamp(cursorOffset.X, 0, width - 1), y = (int)Math.Clamp(cursorOffset.Y, 0, height - 1) },
@@ -146,7 +146,7 @@ internal static class DragOut
             crColorKey = unchecked((int)0xFFFFFFFF)
         };
         // 成功后位图归系统所有，不能再 DeleteObject
-        var result = helper.InitializeFromBitmap(ref dragImage, data);
+        var result = helper.InitializeFromBitmap(ref image, data);
         if (result != 0) DeleteObject(hBitmap);
         Marshal.ReleaseComObject(helper);
     }

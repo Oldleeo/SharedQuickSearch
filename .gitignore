@@ -4,14 +4,10 @@ publish/
 installer/
 *.user
 .vs/
-.dotnet-cli/
-.nuget_packages/
-TestResults/
-*.zip
-*.log
-settings.json
-file-index*.json
-index-journal.jsonl
-*.sqt
-*.none
 artifacts/
+.validation/
+.build-profile/
+
+# 更新签名私钥：永远不进仓库
+*.pem
+update-signing-key*
