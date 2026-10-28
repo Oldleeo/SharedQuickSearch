@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private bool _videoSliderUpdating;
     private bool _uiReady;
     private bool _silentRebuild;
+    private DateTime _lastOverflowReconcile = DateTime.MinValue;
 
     public AppSettings SettingsData { get; private set; }
     public FileIndexService Index => _index;
@@ -76,7 +77,8 @@ public partial class MainWindow : Window
             ThemeManager.Apply(SettingsData.Theme);
         }
 
-        _thumbnailService = new ThumbnailService(SettingsData.ThumbnailCacheLimitMb) { PrefetchEnabled = SettingsData.ThumbnailPrefetch };
+        _thumbnailService = new ThumbnailService(SettingsData.ThumbnailCacheLimitMb, SettingsData.ThumbnailCacheFolder) { PrefetchEnabled = SettingsData.ThumbnailPrefetch };
+        _thumbnailService.SetTeamFolder(SettingsData.TeamCacheFolder);
 
         Folders = new FolderPreviewService(_index, _thumbnailService);
         _thumbnailService.Refined += (entry, image) => Dispatcher.InvokeAsync(() =>
@@ -106,10 +108,27 @@ public partial class MainWindow : Window
         _quickReconcileTimer.Tick += async (_, _) =>
         {
             _quickReconcileTimer.Stop();
+            _quickReconcileTimer.Interval = TimeSpan.FromSeconds(20);
             if (_indexCancellation is not null) { _quickReconcileTimer.Start(); return; }
+            _lastOverflowReconcile = DateTime.UtcNow;
             if (SettingsData.IndexRoots.Count > 0) await RebuildIndexAsync(silent: true);
         };
-        _monitor.NeedsReconcile += _ => Dispatcher.InvokeAsync(() => { _quickReconcileTimer.Stop(); _quickReconcileTimer.Start(); });
+        _monitor.NeedsReconcile += _ => Dispatcher.InvokeAsync(() =>
+        {
+            // 开了全组缓存时，同事写缓存会让监听更容易溢出：这种校准最多 30 分钟一次。
+            // 不是丢掉，而是推到 30 分钟窗口结束时再做（至少等 20 秒），变化照样会被补上
+            var wait = TimeSpan.FromSeconds(20);
+            if (SettingsData.TeamCacheFolder.Length > 0)
+            {
+                var due = _lastOverflowReconcile + TimeSpan.FromMinutes(30) - DateTime.UtcNow;
+                if (due > wait) wait = due;
+                // 已经排好了更晚的一次：不用再往后推
+                if (_quickReconcileTimer.IsEnabled) return;
+            }
+            _quickReconcileTimer.Stop();
+            _quickReconcileTimer.Interval = wait;
+            _quickReconcileTimer.Start();
+        });
         _recentSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _recentSaveTimer.Tick += (_, _) => { _recentSaveTimer.Stop(); try { SettingsStore.Save(SettingsData); } catch { } };
         _videoTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -148,6 +167,9 @@ public partial class MainWindow : Window
         _ = InitializeDataAsync();
         _updates = new UpdateService(() => SettingsData.UpdateFeed, CanApplyUpdateNow, ApplyUpdate);
         _updates.Start();
+        _doubleCtrl = new DoubleCtrlHook(Dispatcher);
+        _doubleCtrl.DoubleTapped += () => { if (SettingsData.DoubleCtrlSummon) Summon(fromHotkey: true); };
+        ApplyDoubleCtrl(showFailure: false);
     }
 
     /// <summary>开机启动：只建窗口句柄（托盘、快捷键需要），不显示窗口。</summary>
@@ -170,6 +192,7 @@ public partial class MainWindow : Window
         await RefreshResultsAsync();
         // 聚光模式下搜索条可能比索引先出来（剪贴板预填、手快先打了字）：索引到了再搜一遍
         if (_spotlight is not null) await _spotlight.RefreshAsync();
+        _spotlight?.RestoreTray();
 
         if (SettingsData.IndexRoots.Count == 0) SetStatus("请先添加共享盘索引目录");
         else if (count == 0) SetStatus("索引目录已配置，等待首次扫描");
@@ -231,6 +254,7 @@ public partial class MainWindow : Window
         _recentSaveTimer.Stop();
         _prefetchTimer.Stop();
         _updates?.Dispose();
+        _doubleCtrl?.Dispose();
         _thumbnailService.Dispose();
         _index.Dispose(); // 把还没写盘的增量变化存下来
         _spotlight?.CloseForExit();
@@ -251,11 +275,12 @@ public partial class MainWindow : Window
     /// <summary>
     /// 什么时候可以重启换版本：搜索条收起、收集栏是空的、没在拖文件、没有设置之类的窗口开着、没在完整扫描。
     /// 用户离开电脑超过 10 分钟时，只要没在拖文件、没有对话框，就直接更新。
-    /// 收集栏里有东西时永远不更新：它不存盘，重启就没了。
+    /// 收集栏会存到本机、重启后恢复；但里面有东西时说明用户可能正挑到一半，要他离开 2 分钟以上才更新。
     /// </summary>
     private bool CanApplyUpdateNow()
     {
-        if (_spotlight is { IsDraggingOut: true } or { HasCollected: true }) return false;
+        if (_spotlight is { IsDraggingOut: true }) return false;
+        if (_spotlight is { HasCollected: true } && IdleTime() < TimeSpan.FromMinutes(2)) return false;
         var otherWindows = Application.Current.Windows.OfType<Window>()
             .Any(x => x.IsVisible && !ReferenceEquals(x, this) && !ReferenceEquals(x, _spotlight));
         if (otherWindows) return false;
@@ -273,16 +298,37 @@ public partial class MainWindow : Window
     /// <summary>刚被自动更新换上来：托盘提示一下。</summary>
     public void NotifyUpdated(string fromVersion)
     {
+        // 从 1.11 之前升上来：说一下新增的、需要自己打开的功能
+        var news = UpdateRules.Compare(fromVersion, "1.11.0") < 0
+            ? "新增：双击 Ctrl 呼出、全组共用缩略图缓存，都在设置里打开。收集栏现在退出后也会保留。"
+            : $"按 {SettingsData.GlobalHotkey} 呼出。设置 → 关于 里可以看到更新状态。";
         Dispatcher.InvokeAsync(() =>
         {
-            try
-            {
-                _trayIcon?.ShowBalloonTip(4000, $"共享速搜已更新到 {UpdateService.CurrentVersion}",
-                    $"按 {SettingsData.GlobalHotkey} 呼出。设置 → 关于 里可以看到更新状态。", Forms.ToolTipIcon.None);
-            }
+            try { _trayIcon?.ShowBalloonTip(6000, $"共享速搜已更新到 {UpdateService.CurrentVersion}", news, Forms.ToolTipIcon.None); }
             catch { }
         }, DispatcherPriority.ApplicationIdle);
     }
+
+    // ================= 双击 Ctrl、缓存位置 =================
+
+    private DoubleCtrlHook? _doubleCtrl;
+
+    private void ApplyDoubleCtrl(bool showFailure)
+    {
+        if (_doubleCtrl is null) return;
+        if (_doubleCtrl.SetEnabled(SettingsData.DoubleCtrlSummon) || !showFailure) return;
+        ModernDialog.Show(DialogOwner, "双击 Ctrl 没能开启，可能被安全软件拦下了。原来的快捷键照常能用。", "双击 Ctrl", MessageBoxImage.Warning);
+    }
+
+    /// <summary>设置里改了本机缓存位置或全组缓存：马上生效。</summary>
+    private void ApplyCacheLocations()
+    {
+        if (_thumbnailService.MoveLocalCache(SettingsData.ThumbnailCacheFolder)) StartThumbnailPrefetch();
+        _thumbnailService.SetTeamFolder(SettingsData.TeamCacheFolder);
+    }
+
+    /// <summary>索引里能出缩略图的文件数（估算全组缓存大小用）。</summary>
+    public int PreviewableCount() => _index.SnapshotEntries().Count(x => !x.IsDirectory && FileTypes.HasVisualPreview(x.Extension));
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct LastInputInfo { public uint Size; public uint Time; }
@@ -1095,6 +1141,8 @@ public partial class MainWindow : Window
             UpdateIndexSummary(result.EntryCount);
             await RefreshResultsAsync(preserve: true);
             if (_spotlight is not null) await _spotlight.RefreshAsync();
+            // 收集栏里上次没找到的文件再找一遍；扫描完全没出错还找不到，才算真的没了
+            _spotlight?.ResolvePendingTray(dropMissing: result.Errors.Count == 0);
             if (result.Errors.Count == 0)
             {
                 SetStatus($"索引完成：{result.EntryCount:N0} 项，用时 {FormatDuration(result.Elapsed)}");
@@ -1269,7 +1317,7 @@ public partial class MainWindow : Window
 
         var oldRoots = SettingsData.IndexRoots.ToArray();
         var oldExclusions = SettingsData.ExcludedPaths.ToArray();
-        var window = new SettingsWindow(owner ?? DialogOwner, SettingsData, _thumbnailService);
+        var window = new SettingsWindow(owner ?? DialogOwner, SettingsData, _thumbnailService, PreviewableCount);
         window.SelectPage(page);
         if (window.ShowDialog() != true || window.SavedSettings is null)
         {
@@ -1282,6 +1330,8 @@ public partial class MainWindow : Window
         ThemeManager.Apply(SettingsData.Theme);
         _thumbnailService.CacheLimitMegabytes = SettingsData.ThumbnailCacheLimitMb;
         RegisterGlobalHotkey(showFailure: true);
+        ApplyDoubleCtrl(showFailure: true);
+        ApplyCacheLocations();
         UpdateHotkeyHint();
         var removed = await _index.ApplyExclusionsAsync(SettingsData.ExcludedPaths);
         UpdateIndexSummary(_index.Count);
@@ -1431,8 +1481,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>引导完成：保存目录、排除和选项，然后在后台开始第一次完整扫描。</summary>
-    public async Task ApplyOnboardingAsync(IReadOnlyList<string> roots, IReadOnlyList<string> exclusions, bool autoStart, bool clipboardPrefill, bool spotlightLaunch)
+    public async Task ApplyOnboardingAsync(OnboardingChoices choices)
     {
+        var (roots, exclusions, autoStart, clipboardPrefill, spotlightLaunch) = (choices.Roots, choices.Exclusions, choices.AutoStart, choices.ClipboardPrefill, choices.SpotlightLaunch);
         if (_indexCancellation is not null)
         {
             _indexCancellation.Cancel();
@@ -1446,8 +1497,14 @@ public partial class MainWindow : Window
         SettingsData.LaunchMode = spotlightLaunch ? "Spotlight" : "Window";
         SettingsData.AutoStart = autoStart && StartupManager.SetEnabled(true);
         if (!autoStart) StartupManager.SetEnabled(false);
+        SettingsData.DoubleCtrlSummon = choices.DoubleCtrl;
+        SettingsData.ThumbnailCacheFolder = choices.LocalCacheFolder;
+        SettingsData.TeamCacheFolder = choices.TeamCacheFolder;
+        if (!string.IsNullOrWhiteSpace(choices.UpdateFeed) && string.IsNullOrWhiteSpace(SettingsData.UpdateFeed)) SettingsData.UpdateFeed = choices.UpdateFeed!.Trim();
         SettingsData.OnboardingDone = true;
         try { SettingsStore.Save(SettingsData); } catch { }
+        ApplyDoubleCtrl(showFailure: true);
+        ApplyCacheLocations();
         await _index.ApplyExclusionsAsync(SettingsData.ExcludedPaths);
         UpdateIndexSummary(_index.Count);
         _ = RebuildWhenIdleAsync();

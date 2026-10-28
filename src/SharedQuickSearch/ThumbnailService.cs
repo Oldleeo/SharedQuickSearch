@@ -8,7 +8,8 @@ namespace SharedQuickSearch;
 /// <summary>本次运行的缩略图命中统计（设置页展示，便于判断慢在哪一层）。</summary>
 public sealed record ThumbnailStats(
     long Memory, long Disk, long WindowsCache, long Embedded, long Generated, long Failed,
-    double AverageMilliseconds, int PrefetchDone, int PrefetchTotal, bool PrefetchRunning);
+    double AverageMilliseconds, int PrefetchDone, int PrefetchTotal, bool PrefetchRunning,
+    long Team = 0, long TeamWrites = 0);
 
 /// <summary>
 /// 分层缩略图管线，从快到慢逐层尝试，命中即停：
@@ -41,7 +42,9 @@ public sealed class ThumbnailService : IDisposable
     private readonly StaWorkerPool _background = new(1, "缩略图后台", ThreadPriority.Lowest);
     private readonly StaWorkerPool _preview = new(1, "预览", ThreadPriority.Normal);
     private readonly SemaphoreSlim _io = new(8);
-    private readonly ThumbnailDiskCache _disk;
+    private volatile ThumbnailDiskCache _disk;
+    private volatile TeamThumbnailCache? _team;
+    private readonly Timer _teamProbe;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly ConcurrentDictionary<string, byte> _failed = new();
     private readonly object _sync = new();
@@ -54,6 +57,7 @@ public sealed class ThumbnailService : IDisposable
     private long _prefetchSignature;
     private int _foreground;
     private int _prefetchDone, _prefetchTotal, _prefetchRunning;
+    private long _hitTeam;
     private long _hitMemory, _hitDisk, _hitWindows, _hitEmbedded, _generated, _failures, _loads, _loadTicks;
 
     private sealed record CacheItem(string Key, BitmapSource Image);
@@ -66,6 +70,70 @@ public sealed class ThumbnailService : IDisposable
 
     public bool PrefetchEnabled { get; set; } = true;
     public string CacheFolder => _disk.Folder;
+    internal TeamThumbnailCache? Team => _team;
+    /// <summary>全组缓存的状态变了（可读写 / 只读 / 连不上）。可能在后台线程触发。</summary>
+    public event Action? TeamStateChanged;
+
+    /// <summary>本机缓存放哪：空 = 默认位置；选了别的文件夹就在里面建一个“共享速搜缩略图”。</summary>
+    public static string ResolveLocalFolder(string? custom)
+    {
+        if (string.IsNullOrWhiteSpace(custom)) return DefaultFolder;
+        // 本机缓存只能在本机硬盘上：网络路径（预设文件、手改的设置里写错了）一律退回默认位置，
+        // 否则换位置时“清掉旧缓存”会删到共享盘上去
+        if (!Setup.InstallerEngine.IsLocalPath(custom.Trim().Trim('"'))) return DefaultFolder;
+        var path = Path.GetFullPath(custom.Trim().Trim('"'));
+        return Path.GetFileName(path.TrimEnd('\\', '/')).Equals(LocalFolderName, StringComparison.OrdinalIgnoreCase) ? path : Path.Combine(path, LocalFolderName);
+    }
+
+    public const string LocalFolderName = "共享速搜缩略图";
+
+    /// <summary>
+    /// 换本机缓存的位置：新位置从空开始，旧位置的缓存删掉（只删我们自己的那个文件夹）。
+    /// 返回 false 表示位置没变。
+    /// </summary>
+    public bool MoveLocalCache(string? custom)
+    {
+        var folder = ResolveLocalFolder(custom);
+        var old = _disk;
+        if (string.Equals(Path.GetFullPath(old.Folder).TrimEnd('\\'), Path.GetFullPath(folder).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return false;
+        StopPrefetch();
+        _disk = new ThumbnailDiskCache(folder, old.LimitBytes);
+        _ = Task.Run(async () =>
+        {
+            // 等已经在路上的写入写完（它们拿的还是旧位置），再删旧位置；旧位置不在本机硬盘上就不删
+            await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            if (Setup.InstallerEngine.IsLocalPath(old.Folder) &&
+                !string.Equals(_disk.Folder, old.Folder, StringComparison.OrdinalIgnoreCase)) old.Clear();
+            _disk.Trim();
+        });
+        return true;
+    }
+
+    /// <summary>开 / 关 / 换全组共用缓存。folder 为空 = 关闭。</summary>
+    public void SetTeamFolder(string? folder)
+    {
+        var target = string.IsNullOrWhiteSpace(folder) ? null : TeamThumbnailCache.NormalizeFolder(folder);
+        if (string.Equals(_team?.Folder, target, StringComparison.OrdinalIgnoreCase)) return;
+        if (_team is { } previous) previous.StateChanged -= OnTeamStateChanged;
+        if (target is null)
+        {
+            _team = null;
+            OnTeamStateChanged();
+            return;
+        }
+        var team = new TeamThumbnailCache(target);
+        team.StateChanged += OnTeamStateChanged;
+        _team = team;
+        _ = team.ProbeAsync();
+        // 换了来源：本次运行记下的“生成不出来”可能是别人那边能生成的，清掉
+        _failed.Clear();
+        Interlocked.Exchange(ref _prefetchSignature, 0);
+    }
+
+    private void OnTeamStateChanged()
+    {
+        try { TeamStateChanged?.Invoke(); } catch { }
+    }
 
     public int CacheLimitMegabytes
     {
@@ -73,10 +141,15 @@ public sealed class ThumbnailService : IDisposable
         set { _disk.LimitBytes = Math.Max(256, value) * 1024L * 1024; _ = Task.Run(_disk.Trim); }
     }
 
-    public ThumbnailService(int cacheLimitMegabytes)
+    public ThumbnailService(int cacheLimitMegabytes, string? localFolder = null)
     {
-        _disk = new ThumbnailDiskCache(DefaultFolder, Math.Max(256, cacheLimitMegabytes) * 1024L * 1024);
+        _disk = new ThumbnailDiskCache(ResolveLocalFolder(localFolder), Math.Max(256, cacheLimitMegabytes) * 1024L * 1024);
         _ = Task.Run(_disk.Trim);
+        // 全组缓存连不上 / 没权限时，每 5 分钟再看一次
+        _teamProbe = new Timer(_ =>
+        {
+            if (_team is { State: TeamCacheState.Offline or TeamCacheState.ReadOnly or TeamCacheState.NoPermission } team) _ = team.ProbeAsync();
+        }, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
 
     /// <summary>前台在用网络时持有它，后台预热和精修会暂停让路。</summary>
@@ -155,7 +228,7 @@ public sealed class ThumbnailService : IDisposable
 
     /// <returns>Definitive = 文件确实打开过、所有层都试过仍没有图（可以记失败标记）。</returns>
     private async Task<(ThumbResult? Result, bool Definitive)> GenerateAsync(FileEntry entry, string key, StaWorkerPool probe, StaWorkerPool sta,
-        bool readDisk, bool count, long fullReadLimit, bool deepScan, bool diskOnly, CancellationToken cancellationToken)
+        bool readDisk, bool count, long fullReadLimit, bool deepScan, bool diskOnly, CancellationToken cancellationToken, bool share = true)
     {
         var path = entry.FullPath;
         var extension = entry.Extension;
@@ -173,12 +246,27 @@ public sealed class ThumbnailService : IDisposable
         }
         if (diskOnly) return (null, false);
 
+        // ②½ 全组共用缓存：同事看过的，直接从共享盘上的缓存文件夹拿一张 20 KB 的小图，顺手存一份到本机
+        if (_team is { CanRead: true } team && TeamThumbnailCache.KeyFor(entry) is { } teamKey)
+        {
+            // 单独的读取通道 + 3 秒超时：共享盘卡住时不占本机缓存的读取名额，缩略图照常出来
+            var shared = await team.TryReadAsync(teamKey).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (shared?.Image is not null)
+            {
+                var local = _disk;
+                _ = Task.Run(() => local.Write(key, shared));
+                if (count) Interlocked.Increment(ref _hitTeam);
+                return (shared.LowQuality && !CanRefine(entry) ? shared with { LowQuality = false } : shared, false);
+            }
+        }
+
         // ③ Windows 缩略图缓存（资源管理器看过的文件）—— 单独的线程池，不排在慢生成后面
         var windows = await probe.Run(() => ShellThumbnail.Load(path, ThumbnailSize, ShellThumbnail.Mode.ThumbnailOnly | ShellThumbnail.Mode.InCacheOnly), cancellationToken).ConfigureAwait(false);
         if (windows is not null)
         {
             var result = new ThumbResult(ImageCodec.FitWithin(windows, ThumbnailSize), 0, 0, false);
-            WriteLater(key, result);
+            WriteLater(entry, key, result, share);
             if (count) Interlocked.Increment(ref _hitWindows);
             return (result, false);
         }
@@ -194,7 +282,8 @@ public sealed class ThumbnailService : IDisposable
                 var small = image.PixelWidth < LowQualityEdge && image.PixelHeight < LowQualityEdge;
                 var result = new ThumbResult(ImageCodec.FitWithin(image, ThumbnailSize), embedded!.Width, embedded.Height, small && CanRefine(entry));
                 // 低清版同步写：保证它一定落在稍后精修写入的清晰版之前，不会把清晰版覆盖回去
-                if (result.LowQuality) _disk.Write(key, result); else WriteLater(key, result);
+                if (result.LowQuality) { _disk.Write(key, result); if (share) ShareLater(entry, result); }
+                else WriteLater(entry, key, result, share);
                 if (count) Interlocked.Increment(ref _hitEmbedded);
                 return (result, false);
             }
@@ -208,7 +297,7 @@ public sealed class ThumbnailService : IDisposable
         if (full?.Image is not null)
         {
             if (full.Width == 0 && embedded is { Width: > 0 }) full = full with { Width = embedded.Width, Height = embedded.Height };
-            WriteLater(key, full);
+            WriteLater(entry, key, full, share);
             if (count) Interlocked.Increment(ref _generated);
             return (full, false);
         }
@@ -239,7 +328,19 @@ public sealed class ThumbnailService : IDisposable
     private static bool CanRefine(FileEntry entry) => FileTypes.Images.Contains(entry.Extension) && entry.Size <= RefineMaxBytes;
 
     /// <summary>编码 + 写盘放后台，不拖慢图片上屏。</summary>
-    private void WriteLater(string key, ThumbResult result) => _ = Task.Run(() => _disk.Write(key, result));
+    private void WriteLater(FileEntry entry, string key, ThumbResult result, bool share)
+    {
+        var disk = _disk;
+        _ = Task.Run(() => disk.Write(key, result));
+        if (share) ShareLater(entry, result);
+    }
+
+    /// <summary>写进全组缓存（开了、而且有写权限时）。本机磁盘上的文件不写。</summary>
+    private void ShareLater(FileEntry entry, ThumbResult result)
+    {
+        if (_team is not { CanWrite: true } team || TeamThumbnailCache.KeyFor(entry) is not { } teamKey) return;
+        _ = Task.Run(() => team.Write(teamKey, result));
+    }
 
     // ================= 精修（低清 → 清晰） =================
 
@@ -288,6 +389,7 @@ public sealed class ThumbnailService : IDisposable
                     continue;
                 }
                 _disk.Write(key, refined);
+                ShareLater(entry, refined);
                 Put(key, image);
                 ApplySize(entry, refined);
                 try { Refined?.Invoke(entry, image); } catch { }
@@ -351,7 +453,9 @@ public sealed class ThumbnailService : IDisposable
                         try
                         {
                             var (result, _) = await GenerateAsync(entry, key, _background, _background, readDisk: false, count: false,
-                                PrefetchFullReadLimit, deepScan: false, diskOnly: false, cancellation.Token).ConfigureAwait(false);
+                                PrefetchFullReadLimit, deepScan: false, diskOnly: false, cancellation.Token,
+                                // 预热生成的不上传到全组缓存：全组缓存只放真有人看过的图，不然第一台开预热的电脑会把整个索引都传上去
+                                share: false).ConfigureAwait(false);
                             if (result is not null) ApplySize(entry, result);
                         }
                         catch (OperationCanceledException) { throw; }
@@ -402,7 +506,8 @@ public sealed class ThumbnailService : IDisposable
         return new ThumbnailStats(
             Interlocked.Read(ref _hitMemory), Interlocked.Read(ref _hitDisk), Interlocked.Read(ref _hitWindows),
             Interlocked.Read(ref _hitEmbedded), Interlocked.Read(ref _generated), Interlocked.Read(ref _failures),
-            average, Volatile.Read(ref _prefetchDone), Volatile.Read(ref _prefetchTotal), Volatile.Read(ref _prefetchRunning) == 1);
+            average, Volatile.Read(ref _prefetchDone), Volatile.Read(ref _prefetchTotal), Volatile.Read(ref _prefetchRunning) == 1,
+            Interlocked.Read(ref _hitTeam), _team?.Writes ?? 0);
     }
 
     public Task<(long Bytes, int Files)> MeasureCacheAsync() => Task.Run(_disk.Measure);
@@ -446,6 +551,7 @@ public sealed class ThumbnailService : IDisposable
 
     public void Dispose()
     {
+        _teamProbe.Dispose();
         CancelPrefetch();
         _lifetime.Cancel();
         _probe.Dispose();

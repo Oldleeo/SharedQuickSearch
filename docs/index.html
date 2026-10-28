@@ -195,6 +195,7 @@
       <ul class="facts">
         <li><b>本机缓存</b>生成过的都存在本机，默认上限 2 GB，满了删最久没看的。</li>
         <li><b>后台预热</b>电脑空闲时提前生成，你一开始翻就自动暂停，不抢带宽。</li>
+        <li><b>全组共用（可选）</b>在共享盘上选一个专门的文件夹，一个人看过的图，其他人直接用。只往那个文件夹里写，每张约 20 KB。</li>
         <li><b>文件夹预览</b>从文件夹里挑最近的 3 张图拼成预览，写着里面有多少文件，不用点进去就知道装的是什么。</li>
         <li><b>先糊后清</b>JPG 先显示文件里自带的小图，后台换成清晰版，自动替换。</li>
         <li><b>自动转正</b>手机和相机拍的照片按方向信息转正。</li>
@@ -316,7 +317,7 @@
 <!-- ============ 安全 ============ -->
 <section class="safety" id="safety">
   <div class="wrap">
-    <h2>它只读你的共享盘</h2>
+    <h2>不修改共享盘上的原素材</h2>
     <p class="section-lead">给全组装之前，这几件事最好先说清楚。代码是开源的，每一条都可以自己去查。</p>
     <div class="safety-cols">
       <div>
@@ -332,8 +333,8 @@
       <div>
         <h3>不会做的</h3>
         <ul class="crosses">
-          <li>不改、不删、不移动、不重命名共享盘上的任何文件</li>
-          <li>没有账号，没有统计，文件名和路径不会离开这台电脑；联网只用来检查和下载更新</li>
+          <li>不改、不删、不移动、不重命名共享盘上的原素材；全组缓存默认关闭，开启后仅写入指定缓存目录</li>
+          <li>没有账号和统计，不向作者上传文件名、路径或搜索内容；网络用于共享盘、更新和可选的全组缓存</li>
           <li>不保存剪贴板内容</li>
           <li>不写系统级注册表（HKLM），不装服务</li>
           <li>卸载时不碰共享盘，只删本机的程序和快捷方式</li>
@@ -346,7 +347,7 @@
 <!-- ============ 上手 ============ -->
 <section class="start" id="start">
   <div class="wrap">
-    <h2>从下载到第一次搜索，大约三分钟</h2>
+    <h2>从下载到第一次搜索</h2>
     <ol class="steps">
       <li>
         <h3>下载安装</h3>
@@ -376,6 +377,7 @@
       <div><dt><span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">C</span></dt><dd>复制文件，到别处直接粘贴</dd></div>
       <div><dt><span class="kbd">中键</span> <span class="kbd">Ctrl</span><span class="kbd">D</span></dt><dd>放进 / 移出收集栏，跨 SKU 一起复制</dd></div>
       <div><dt><span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">↵</span></dt><dd>展开 / 收回工作台</dd></div>
+      <div><dt>双击 <span class="kbd">Ctrl</span></dt><dd>也能呼出（默认关，设置里打开）</dd></div>
       <div><dt><span class="kbd">Tab</span></dt><dd>切换分类</dd></div>
       <div><dt><span class="kbd">Esc</span></dt><dd>先清空搜索，再按一次收起</dd></div>
     </dl>
@@ -388,7 +390,8 @@
     <h2>目前做不到的</h2>
     <ul class="limit-list">
       <li><b>只有 Windows 版。</b>用的是 WPF 和 Windows 的缩略图、拖拽组件，没有 Mac 版的计划。</li>
-      <li><b>每台电脑各自建索引。</b>全组共用一份索引和缩略图缓存还没做，每个人第一次都要扫一遍。</li>
+      <li><b>每台电脑各自建索引。</b>缩略图可以全组共用，但索引还是每个人自己扫一遍。</li>
+      <li><b>全组缓存权限要单独确认。</b>能读取缓存目录的人可能看到其中的缩略图，缓存不会自动继承每份原素材的访问限制。</li>
       <li><b>只搜文件名，不搜文件内容。</b>PSD 里的图层名、PDF 里的文字搜不到。</li>
       <li><b>多音字只认一个读音。</b>比如“长”只认 zhang，搜 chang 找不到。</li>
       <li><b>快速校准看不到“原地覆盖保存”。</b>这类修改靠实时监听；监听断过的话，要等下一次完整扫描。</li>
@@ -416,7 +419,7 @@
       </details>
       <details>
         <summary>我的数据存在哪？怎么清掉？</summary>
-        <p>设置和索引在 <code>%AppData%\Oldlee\共享速搜</code>，缩略图缓存在 <code>%LocalAppData%\Oldlee\共享速搜\thumbs</code>。设置里可以清空缓存；卸载时勾选“同时删除我的设置、索引和缩略图缓存”会全部删掉。</p>
+        <p>设置、索引和收集栏路径在 <code>%AppData%\Oldlee\共享速搜</code>，本机缩略图默认放在 <code>%LocalAppData%\Oldlee\共享速搜\thumbs</code>，可在设置中换位置。全组缓存默认关闭；开启后仅在选定的 <code>.共享速搜缓存</code> 中写缩略图，权限由共享目录管理。卸载不删除共享盘文件。</p>
       </details>
       <details>
         <summary>怎么卸载？</summary>

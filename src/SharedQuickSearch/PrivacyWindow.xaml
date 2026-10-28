@@ -35,7 +35,7 @@
 
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="隐私结论" Style="{StaticResource PolicyTitle}"/>
-                    <TextBlock Style="{StaticResource PolicyBody}" Text="共享速搜在本机运行，没有云端账号，不含广告、统计 SDK 或遥测，不会把文件、文件名、路径、搜索关键词、缩略图或共享盘凭据上传给作者或任何第三方。"/>
+                    <TextBlock Style="{StaticResource PolicyBody}" Text="共享速搜在本机运行，没有云端账号、广告、统计 SDK 或遥测，不向作者上传素材、文件名、路径、搜索内容或共享盘凭据。可选的全组缓存会向你指定的共享目录写入缩略图。"/>
                 </StackPanel></Border>
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="本地处理的数据" Style="{StaticResource PolicyTitle}"/>
@@ -51,11 +51,15 @@
                 </StackPanel></Border>
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="网络行为" Style="{StaticResource PolicyTitle}"/>
-                    <TextBlock Style="{StaticResource PolicyBody}" Text="软件自身没有任何服务器。网络访问只发生在两种情况：Windows 连接你配置的共享路径；你主动点击“作者主页”后由默认浏览器打开链接。"/>
+                    <TextBlock Style="{StaticResource PolicyBody}" Text="网络用于访问已配置的共享盘、获取更新清单及签名、下载更新包，或由浏览器打开你点击的作者主页。更新请求不携带素材名称、路径或搜索内容，服务器仍能看到 IP 地址、程序版本等正常连接信息。自动更新不能关闭，可更换为受控的内网更新源。"/>
+                </StackPanel></Border>
+                <Border Style="{StaticResource PolicyCard}"><StackPanel>
+                    <TextBlock Text="全组缓存与收集栏" Style="{StaticResource PolicyTitle}"/>
+                    <TextBlock Style="{StaticResource PolicyBody}" Text="全组缓存默认关闭。启用后，仅在指定位置的 .共享速搜缓存 里写缩略图；缓存读者可能看到这些图片，缓存不会自动继承每份原素材的访问限制，请先配置权限。收集栏路径保存在本机 %AppData%\Oldlee\共享速搜\tray.json，用于重启与更新后恢复。"/>
                 </StackPanel></Border>
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="全局快捷键与开机启动" Style="{StaticResource PolicyTitle}"/>
-                    <TextBlock Style="{StaticResource PolicyBody}" Text="全局快捷键只响应你设置的那一个组合键，不记录其他键盘输入。呼出搜索条时，如果开启了“自动填入剪贴板里的 SKU”，软件会在本机读一次剪贴板文字，看起来像货号才填进搜索框，不保存、不上传；可以在设置里关闭。开机启动写在当前用户的 Windows Run 注册表项里，随时可以在设置中关闭。"/>
+                    <TextBlock Style="{StaticResource PolicyBody}" Text="普通快捷键只响应设定组合。双击 Ctrl 默认关闭，启用时安装全局键盘钩子，按键事件经过钩子但不记录、保存、发送或拦截。剪贴板预填仅在呼出时读取本机文字，可关闭。开机启动写入当前用户的 Windows Run 项，可随时关闭。"/>
                 </StackPanel></Border>
             </StackPanel>
         </ScrollViewer>

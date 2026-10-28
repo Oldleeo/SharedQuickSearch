@@ -77,7 +77,7 @@
                         <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE946;" Margin="0,0,12,0"/><TextBlock Text="关于"/></StackPanel>
                     </RadioButton>
                 </StackPanel>
-                <TextBlock x:Name="NavVersionText" Text="版本 1.10.0" Style="{StaticResource Caption}" VerticalAlignment="Bottom" Margin="28,0,0,18"/>
+                <TextBlock x:Name="NavVersionText" Text="版本 1.11.0" Style="{StaticResource Caption}" VerticalAlignment="Bottom" Margin="28,0,0,18"/>
             </Grid>
 
             <!-- ============ 右侧内容 ============ -->
@@ -204,6 +204,17 @@
                                     <TextBlock x:Name="HotkeyHint" Text="保存设置后生效。" Style="{StaticResource Caption}" Margin="2,8,0,0"/>
                                 </StackPanel>
                             </Border>
+
+                            <Border Style="{StaticResource SettingCard}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="双击 Ctrl 也能呼出" Style="{StaticResource SettingTitle}"/>
+                                        <TextBlock Text="快速连按两下 Ctrl（中间不按别的键），和上面的快捷键效果一样，两个都能用。需要一个全局键盘钩子：只看是不是 Ctrl，不记录、不保存任何按键。少数公司的安全软件会对此提示。" Style="{StaticResource SettingHint}"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="DoubleCtrlCheck" Grid.Column="1" Style="{StaticResource ToggleSwitch}" VerticalAlignment="Center" Margin="24,0,0,0"/>
+                                </Grid>
+                            </Border>
                         </StackPanel>
 
                         <!-- 页面 2：外观 -->
@@ -268,11 +279,40 @@
                                     </Grid>
                                     <Border Height="1" Background="{DynamicResource StrokeBrush}" Margin="0,16"/>
                                     <Grid>
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBox x:Name="CacheFolderText" Style="{StaticResource SelectableText}" FontSize="11.5" Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" TextWrapping="NoWrap"/>
-                                        <Button Grid.Column="1" Content="打开文件夹" Click="OpenCacheFolder_Click"/>
-                                        <Button Grid.Column="3" Content="清空缓存" Style="{StaticResource DangerButton}" Click="ClearCache_Click"/>
+                                        <Button Grid.Column="1" Content="换位置…" Click="ChangeCacheFolder_Click" ToolTip="比如 C 盘紧张时换到 D 盘。保存后生效，旧位置的缓存会删掉"/>
+                                        <Button Grid.Column="3" Content="打开文件夹" Click="OpenCacheFolder_Click"/>
+                                        <Button Grid.Column="5" Content="清空缓存" Style="{StaticResource DangerButton}" Click="ClearCache_Click"/>
                                     </Grid>
+                                    <TextBlock x:Name="CacheFolderHint" Style="{StaticResource Caption}" Margin="2,8,0,0" Visibility="Collapsed"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 全组共用缓存：共享盘上的 .共享速搜缓存 -->
+                            <Border Style="{StaticResource SettingCard}">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="全组共用缩略图缓存" Style="{StaticResource SettingTitle}"/>
+                                            <TextBlock Text="在共享盘上建隐藏的 .共享速搜缓存，共用已生成的缩略图，索引会跳过它。缓存可被该目录的读者看到，不会自动继承每份原素材的权限；请选好权限范围，敏感素材不要写入权限更宽的缓存。默认关闭。" Style="{StaticResource SettingHint}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="TeamCacheCheck" Grid.Column="1" Style="{StaticResource ToggleSwitch}" VerticalAlignment="Center" Margin="24,0,0,0" Checked="TeamCacheCheck_Changed" Unchecked="TeamCacheCheck_Changed"/>
+                                    </Grid>
+                                    <StackPanel x:Name="TeamCachePanel" Margin="0,14,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBox x:Name="TeamCacheBox" local:Ui.Placeholder="\\服务器\设计部（会在里面建 .共享速搜缓存）" TextChanged="TeamCacheBox_TextChanged"/>
+                                            <Button Grid.Column="2" Content="浏览…" Click="BrowseTeamCache_Click"/>
+                                            <Button Grid.Column="4" Content="检查" Click="CheckTeamCache_Click"/>
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal" Margin="2,10,0,0">
+                                            <Ellipse x:Name="TeamCacheDot" Width="7" Height="7" Fill="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <TextBlock x:Name="TeamCacheStatus" Text="还没检查" Style="{StaticResource Caption}" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <TextBlock x:Name="TeamCacheEstimate" Style="{StaticResource Caption}" Margin="17,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 
@@ -283,13 +323,14 @@
                                         <TextBlock Text="本次运行统计" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
                                         <Button Grid.Column="1" Style="{StaticResource SmallIconButton}" Content="&#xE72C;" Click="RefreshStats_Click" ToolTip="刷新"/>
                                     </Grid>
-                                    <UniformGrid Columns="3" Margin="0,12,0,0">
+                                    <UniformGrid Columns="4" Margin="0,12,0,0">
                                         <StackPanel Margin="0,0,0,12"><TextBlock x:Name="StatDisk" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="本机缓存命中" Style="{StaticResource Caption}"/></StackPanel>
                                         <StackPanel Margin="0,0,0,12"><TextBlock x:Name="StatWindows" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="Windows 缓存命中" Style="{StaticResource Caption}"/></StackPanel>
                                         <StackPanel Margin="0,0,0,12"><TextBlock x:Name="StatEmbedded" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="文件内嵌预览" Style="{StaticResource Caption}"/></StackPanel>
-                                        <StackPanel><TextBlock x:Name="StatGenerated" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="现场生成" Style="{StaticResource Caption}"/></StackPanel>
+                                        <StackPanel Margin="0,0,0,12"><TextBlock x:Name="StatGenerated" Text="0" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="现场生成" Style="{StaticResource Caption}"/></StackPanel>
                                         <StackPanel><TextBlock x:Name="StatAverage" Text="—" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="平均耗时（不含内存命中）" Style="{StaticResource Caption}"/></StackPanel>
                                         <StackPanel><TextBlock x:Name="StatPrefetch" Text="—" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="后台预热进度" Style="{StaticResource Caption}"/></StackPanel>
+                                        <StackPanel><TextBlock x:Name="StatTeam" Text="—" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="全组缓存命中 / 写入" Style="{StaticResource Caption}"/></StackPanel>
                                     </UniformGrid>
                                 </StackPanel>
                             </Border>
@@ -304,7 +345,7 @@
                                 </Border>
                                 <StackPanel Margin="18,0,0,0" VerticalAlignment="Center">
                                     <TextBlock Text="共享速搜" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="VersionText" Text="版本 1.10.0" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+                                    <TextBlock x:Name="VersionText" Text="版本 1.11.0" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </StackPanel>
                             <TextBlock Text="共享盘素材的本机索引、搜索和预览工具。为按 SKU 找图、找源文件的日常场景而做。" Style="{StaticResource SettingHint}" Margin="0,18,0,20"/>
@@ -353,7 +394,7 @@
                                     </Border>
                                     <StackPanel Grid.Column="1" Margin="14,0,16,0" VerticalAlignment="Center">
                                         <TextBlock Text="只在本机运行" Style="{StaticResource SettingTitle}"/>
-                                        <TextBlock Text="不上传文件名、路径、缩略图或搜索内容，也不会修改、移动或删除共享盘上的任何文件。唯一的联网是检查和下载更新。" Style="{StaticResource SettingHint}"/>
+                                        <TextBlock Text="无账号、广告或遥测，不向作者上传素材、文件名、路径或搜索内容。网络用于共享盘访问和更新；开启全组缓存后，只在选定的 .共享速搜缓存 中写入缩略图，不修改原素材。" Style="{StaticResource SettingHint}"/>
                                     </StackPanel>
                                     <Button Grid.Column="2" Content="隐私政策" Click="Privacy_Click"/>
                                 </Grid>

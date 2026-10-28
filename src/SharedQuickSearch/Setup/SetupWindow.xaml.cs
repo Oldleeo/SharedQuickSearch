@@ -239,6 +239,8 @@ public partial class SetupWindow : Window
             var options = new InstallOptions(System.IO.Path.GetFullPath(LocationBox.Text.Trim().Trim('"')), DesktopCheck.IsChecked == true, StartMenuCheck.IsChecked == true);
             var progress = new Progress<SetupProgress>(OnProgress);
             _installedExe = await InstallerEngine.InstallAsync(options, progress, CancellationToken.None);
+            // 安装包旁边放了“共享速搜.预设.json”：带到本机，首次引导会自动填好
+            InstallPreset.CaptureFromInstaller();
             foreach (var (key, _) in _steps) SetStep(key, StepState.Done);
             await Task.Delay(260); // 让进度条走满再翻页
             ShowDone(success: true,

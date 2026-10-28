@@ -46,6 +46,11 @@ public sealed class ExcludeCandidate : Observable
 
 public sealed record DriveSuggestion(string Label, string Path);
 
+/// <summary>首次引导里选好的东西，一次交给后台宿主保存。</summary>
+public sealed record OnboardingChoices(
+    IReadOnlyList<string> Roots, IReadOnlyList<string> Exclusions, bool AutoStart, bool ClipboardPrefill, bool SpotlightLaunch,
+    bool DoubleCtrl, string LocalCacheFolder, string TeamCacheFolder, string? UpdateFeed);
+
 /// <summary>
 /// 首次引导 + 使用教学。
 /// 引导：欢迎 → 共享盘目录 → 不录入的文件夹 → 选项 → 开始扫描；
@@ -69,13 +74,16 @@ public partial class OnboardingWindow : Window
     private CancellationTokenSource? _excludeScan;
     private readonly List<(IAnimatable Target, DependencyProperty Property)> _demos = new();
     private readonly string _hotkey;
+    private bool _teamCache;
+    private string _localCacheChoice = "";
+    private TeamCacheState? _teamProbe;
 
     /// <param name="host">后台宿主；只看教学时可以为 null（从设置窗口打开）。</param>
     public OnboardingWindow(MainWindow? host, bool tutorialOnly)
     {
         _host = host;
         InitializeComponent();
-        _setupFlow = new List<FrameworkElement> { PageWelcome, PageRoots, PageExclude, PageOptions, PageReady };
+        _setupFlow = new List<FrameworkElement> { PageWelcome, PageRoots, PageExclude, PageOptions, PageCache, PageReady };
         _tutorialFlow = new List<FrameworkElement> { TutorialSummon, TutorialSearch, TutorialDrag, TutorialPreview, TutorialKeys };
         _flow = _setupFlow;
         RootsList.ItemsSource = _roots;
@@ -89,6 +97,28 @@ public partial class OnboardingWindow : Window
         AutoStartCheck.IsChecked = settings.OnboardingDone ? StartupManager.IsEnabled() : true;
         SpotlightCheck.IsChecked = settings.LaunchMode != "Window";
         ClipboardCheck.IsChecked = settings.ClipboardPrefill;
+        DoubleCtrlCheck.IsChecked = settings.DoubleCtrlSummon;
+        _localCacheChoice = settings.ThumbnailCacheFolder;
+        _teamCache = settings.TeamCacheFolder.Length > 0;
+        TeamCacheBox.Text = settings.TeamCacheFolder;
+
+        // 安装包旁边放了预设文件，而且还没设置过：按预设填好，用户照样可以改
+        if (!tutorialOnly && settings.IndexRoots.Count == 0 && InstallPreset.Find() is { } preset)
+        {
+            _preset = preset;
+            foreach (var root in preset.IndexRoots) AddRoot(root, quiet: true);
+            foreach (var path in preset.ExcludedPaths) _excludes.Add(new ExcludeCandidate(PathRules.Normalize(path), "预设", true));
+            if (preset.AutoStart is { } autoStart) AutoStartCheck.IsChecked = autoStart;
+            if (preset.ClipboardPrefill is { } clipboard) ClipboardCheck.IsChecked = clipboard;
+            if (preset.DoubleCtrlSummon is { } doubleCtrl) DoubleCtrlCheck.IsChecked = doubleCtrl;
+            if (!string.IsNullOrWhiteSpace(preset.ThumbnailCacheFolder) && Setup.InstallerEngine.IsLocalPath(preset.ThumbnailCacheFolder!)) _localCacheChoice = preset.ThumbnailCacheFolder!;
+            if (!string.IsNullOrWhiteSpace(preset.TeamCacheFolder))
+            {
+                _teamCache = true;
+                TeamCacheBox.Text = TeamThumbnailCache.NormalizeFolder(preset.TeamCacheFolder!);
+            }
+        }
+        ShowCacheChoice();
         BuildKeycaps(HotkeyCaps, _hotkey.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), small: true);
         BuildKeycaps(S1Keys, _hotkey.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), small: false);
         BuildTutorialRows();
@@ -142,7 +172,11 @@ public partial class OnboardingWindow : Window
             _ = ScanExcludeCandidatesAsync();
             return;
         }
-        if (ReferenceEquals(page, PageOptions)) UpdateReady();
+        if (ReferenceEquals(page, PageCache))
+        {
+            if (!await ValidateCacheAsync()) { Shake(PageCache); return; }
+            UpdateReady();
+        }
         if (ReferenceEquals(page, PageReady))
         {
             if (!await ApplyAsync()) return;
@@ -493,7 +527,101 @@ public partial class OnboardingWindow : Window
         ExcludeInput.Clear();
     }
 
-    // ================= 第 3 步 → 开始扫描 =================
+    // ================= 第 4 步：缩略图缓存 =================
+
+    private InstallPreset? _preset;
+
+    private void CacheLocalCard_Click(object sender, MouseButtonEventArgs e) => SelectCache(team: false);
+
+    private void CacheTeamCard_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (_teamCache) return;
+        SelectCache(team: true);
+        Dispatcher.InvokeAsync(() => TeamCacheBox.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private void SelectCache(bool team)
+    {
+        _teamCache = team;
+        // 第一次选全组共用：按第一个共享盘目录给个建议位置
+        if (team && TeamCacheBox.Text.Trim().Length == 0 && TeamThumbnailCache.SuggestFor(_roots.Select(x => x.Path)) is { } suggestion)
+            TeamCacheBox.Text = suggestion;
+        ShowCacheChoice();
+        if (team) Ui.FadeIn(CacheTeamPanel, offsetY: 6, milliseconds: 220);
+    }
+
+    private void ShowCacheChoice()
+    {
+        CacheLocalHint.Text = $"{ThumbnailService.ResolveLocalFolder(_localCacheChoice)} · 上限 2 GB，满了自动删最久没看的";
+        CacheLocalDot.Visibility = _teamCache ? Visibility.Collapsed : Visibility.Visible;
+        CacheTeamDot.Visibility = _teamCache ? Visibility.Visible : Visibility.Collapsed;
+        CacheTeamPanel.Visibility = _teamCache ? Visibility.Visible : Visibility.Collapsed;
+        CacheLocalCard.SetResourceReference(Border.BorderBrushProperty, _teamCache ? "SpotlightTileBrush" : "AccentBrush");
+        CacheTeamCard.SetResourceReference(Border.BorderBrushProperty, _teamCache ? "AccentBrush" : "SpotlightTileBrush");
+        CacheLocalRing.SetResourceReference(Shape.StrokeProperty, _teamCache ? "TextTertiaryBrush" : "AccentBrush");
+        CacheTeamRing.SetResourceReference(Shape.StrokeProperty, _teamCache ? "AccentBrush" : "TextTertiaryBrush");
+    }
+
+    private void ChangeLocalCache_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog { Description = "选择本机缩略图缓存的位置（会在里面建一个“共享速搜缩略图”文件夹）", UseDescriptionForTitle = true, ShowNewFolderButton = true };
+        if (dialog.ShowDialog() != Forms.DialogResult.OK) return;
+        if (!Setup.InstallerEngine.IsLocalPath(dialog.SelectedPath))
+        {
+            ModernDialog.Show(this, "本机缓存要放在这台电脑的硬盘上。想全组共用，选下面的“全组共用一份”。", "缓存位置", MessageBoxImage.Warning);
+            return;
+        }
+        _localCacheChoice = string.Equals(ThumbnailService.ResolveLocalFolder(dialog.SelectedPath), ThumbnailService.DefaultFolder, StringComparison.OrdinalIgnoreCase) ? "" : dialog.SelectedPath;
+        SelectCache(team: false);
+    }
+
+    private void TeamCacheBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _teamProbe = null;
+        SetTeamStatus("还没检查", "TextTertiaryBrush");
+    }
+
+    private async void CheckTeamCache_Click(object sender, RoutedEventArgs e) => await ProbeTeamCacheAsync();
+
+    private async Task<TeamCacheState?> ProbeTeamCacheAsync()
+    {
+        var path = TeamCacheBox.Text.Trim();
+        if (path.Length == 0) { SetTeamStatus("填一个共享盘上的位置，比如 \\\\NAS\\设计部", "WarningBrush"); return null; }
+        if (Setup.InstallerEngine.IsLocalPath(path)) { SetTeamStatus("这是本机硬盘上的位置，同事访问不到。要选共享盘上的。", "WarningBrush"); return null; }
+        SetTeamStatus("正在检查…", "AccentBrush");
+        var probe = new TeamThumbnailCache(path);
+        var state = await probe.ProbeAsync();
+        TeamCacheBox.TextChanged -= TeamCacheBox_TextChanged;
+        TeamCacheBox.Text = probe.Folder;
+        TeamCacheBox.TextChanged += TeamCacheBox_TextChanged;
+        _teamProbe = state;
+        SetTeamStatus(probe.Describe(), state switch { TeamCacheState.ReadWrite => "SuccessBrush", TeamCacheState.ReadOnly => "AccentBrush", _ => "WarningBrush" });
+        return state;
+    }
+
+    /// <summary>选了全组共用：没检查过就先检查；连不上就不往下走（可以改选“只存在这台电脑上”）。</summary>
+    private async Task<bool> ValidateCacheAsync()
+    {
+        if (!_teamCache) return true;
+        _busy = true;
+        try
+        {
+            var state = _teamProbe ?? await ProbeTeamCacheAsync();
+            if (state is TeamCacheState.ReadWrite or TeamCacheState.ReadOnly) return true;
+            if (state == TeamCacheState.Offline) SetTeamStatus("连不上这个文件夹。检查路径，或者先选“只存在这台电脑上”，以后在设置里再开。", "WarningBrush");
+            // NoPermission：ProbeTeamCacheAsync 已经显示了“换一个能写入的子文件夹”
+            return false;
+        }
+        finally { _busy = false; }
+    }
+
+    private void SetTeamStatus(string text, string brush)
+    {
+        TeamCacheStatus.Text = text;
+        TeamCacheDot.SetResourceReference(Shape.FillProperty, brush);
+    }
+
+    // ================= 第 4 步 → 开始扫描 =================
 
     private void UpdateReady()
     {
@@ -504,9 +632,10 @@ public partial class OnboardingWindow : Window
         ReadyExcludes.Text = excluded.ToString();
         ReadyOnline.Text = online.ToString();
         var offline = roots - online;
+        var cache = _teamCache ? "缩略图全组共用。" : "缩略图存在这台电脑上。";
         ReadySummary.Text = offline > 0
-            ? $"将索引 {roots} 个目录，跳过 {excluded} 个文件夹。其中 {offline} 个现在连不上，这次先跳过；连上之后在工作台点刷新按钮扫描一次就好。"
-            : $"将索引 {roots} 个目录，跳过 {excluded} 个文件夹。";
+            ? $"将索引 {roots} 个目录，跳过 {excluded} 个文件夹，{cache}其中 {offline} 个目录现在连不上，这次先跳过；连上之后在工作台点刷新按钮扫描一次就好。"
+            : $"将索引 {roots} 个目录，跳过 {excluded} 个文件夹，{cache}";
     }
 
     private async Task<bool> ApplyAsync()
@@ -516,12 +645,16 @@ public partial class OnboardingWindow : Window
         NextButton.Content = "正在保存…";
         try
         {
-            await _host.ApplyOnboardingAsync(
+            await _host.ApplyOnboardingAsync(new OnboardingChoices(
                 _roots.Select(x => x.Path).ToList(),
                 _excludes.Where(x => x.IsExcluded).Select(x => x.Path).ToList(),
                 AutoStartCheck.IsChecked == true,
                 ClipboardCheck.IsChecked == true,
-                SpotlightCheck.IsChecked == true);
+                SpotlightCheck.IsChecked == true,
+                DoubleCtrlCheck.IsChecked == true,
+                _localCacheChoice,
+                _teamCache ? TeamThumbnailCache.NormalizeFolder(TeamCacheBox.Text.Trim()) : "",
+                _preset?.UpdateFeed));
             _applied = true;
             return true;
         }

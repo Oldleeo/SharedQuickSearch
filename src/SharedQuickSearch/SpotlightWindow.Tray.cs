@@ -36,8 +36,15 @@ public partial class SpotlightWindow
     private bool _trayDragPressed;
 
     private bool InTray(FileEntry entry) => _trayPaths.Contains(entry.FullPath);
-    /// <summary>收集栏里还有东西：自动更新会等它清空（或者用户离开很久）再重启，免得收集的东西没了。</summary>
+    /// <summary>收集栏里还有东西（自动更新时会更谨慎：要等用户离开一会儿）。</summary>
     public bool HasCollected => ActiveTrayCount > 0;
+
+    /// <summary>退出前马上存一次，不等防抖。</summary>
+    public void FlushTray()
+    {
+        _traySaveTimer.Stop();
+        SaveTray();
+    }
     public bool IsDraggingOut => _dragging;
     /// <summary>Windows 设置里关掉了“窗口内的动画”：直接出现，不飞。</summary>
     private static bool ReduceMotion => !SystemParameters.ClientAreaAnimation;
@@ -49,6 +56,8 @@ public partial class SpotlightWindow
     {
         TrayList.ItemsSource = _tray;
         _tray.CollectionChanged += (_, _) => SyncTrayState();
+        _traySaveTimer.Tick += (_, _) => { _traySaveTimer.Stop(); SaveTray(); };
+        if (_host.IndexLoaded) RestoreTray();
     }
 
     private void SyncTrayState()
@@ -57,7 +66,75 @@ public partial class SpotlightWindow
         Volatile.Write(ref _trayShown, active);
         _trayPaths.Clear();
         foreach (var entry in active) _trayPaths.Add(entry.FullPath);
+        if (_trayRestored) { _traySaveTimer.Stop(); _traySaveTimer.Start(); }
     }
+
+    // ================= 存到本机：退出、自动更新以后还在 =================
+
+    private static string TrayFile => System.IO.Path.Combine(SettingsStore.DataFolder, "tray.json");
+    private readonly System.Windows.Threading.DispatcherTimer _traySaveTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
+    private bool _trayRestored;
+
+    // 上次收集了、但索引里暂时找不到的路径（索引还在重建、共享盘没连上）：先留着，下次索引更新再找
+    private readonly List<string> _trayPending = new();
+
+    /// <summary>只存路径（和“最近使用”一样只在本机），不存缩略图。</summary>
+    private void SaveTray()
+    {
+        if (!_trayRestored) return; // 还没读回上次的就写，会把上次的覆盖掉
+        try
+        {
+            System.IO.Directory.CreateDirectory(SettingsStore.DataFolder);
+            var paths = ActiveTray.Select(x => x.Entry.FullPath).Concat(_trayPending).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var temporary = TrayFile + ".tmp";
+            System.IO.File.WriteAllText(temporary, System.Text.Json.JsonSerializer.Serialize(paths));
+            System.IO.File.Move(temporary, TrayFile, overwrite: true);
+        }
+        catch { }
+    }
+
+    /// <summary>读回上次的收集栏（索引第一次载入后调用）。</summary>
+    public void RestoreTray()
+    {
+        if (_trayRestored) return;
+        _trayRestored = true;
+        List<string>? paths = null;
+        try { if (System.IO.File.Exists(TrayFile)) paths = System.Text.Json.JsonSerializer.Deserialize<List<string>>(System.IO.File.ReadAllText(TrayFile)); }
+        catch { }
+        if (paths is null || paths.Count == 0) return;
+        _trayPending.AddRange(paths.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(500));
+        ResolvePendingTray(dropMissing: false);
+    }
+
+    /// <summary>
+    /// 把还没找到的路径在索引里再找一遍（索引载入、每次扫描完调用）。
+    /// dropMissing：一次没有出错的完整扫描之后还找不到，说明文件确实删了或移走了，才真正去掉。
+    /// </summary>
+    public void ResolvePendingTray(bool dropMissing)
+    {
+        if (!_trayRestored || _trayPending.Count == 0) return;
+        var restored = 0;
+        foreach (var path in _trayPending.ToList())
+        {
+            if (InTray(path)) { _trayPending.Remove(path); continue; }
+            if (!_host.Index.TryGet(path, out var entry) || entry is null) continue;
+            _trayPending.Remove(path);
+            _tray.Add(new TrayItem(entry));
+            MarkCollected(entry.FullPath, true);
+            if (entry.Thumbnail is null) _ = LoadThumbnailAsync(entry, CancellationToken.None);
+            restored++;
+        }
+        if (dropMissing) _trayPending.Clear();
+        if (restored > 0)
+        {
+            ShowTray();
+            UpdateTrayCount();
+        }
+        // 找到了、或者确认找不到了才写：索引还空着的时候不会把上次的收集栏写没
+        if (restored > 0 || dropMissing) SaveTray();
+    }
+
+    private bool InTray(string path) => _trayPaths.Contains(path);
 
     // ================= 面板高度：给收集栏留位置 =================
 
@@ -436,6 +513,7 @@ public partial class SpotlightWindow
     private void TrayClear_Click(object sender, RoutedEventArgs e)
     {
         if (ActiveTrayCount == 0) return;
+        _trayPending.Clear(); // 用户清空了：还没找到的那些也一起不要了
         _lastCleared = TrayEntries.ToList();
         _clearedAt = DateTime.Now;
         _clearedQuery = SearchBox.Text;

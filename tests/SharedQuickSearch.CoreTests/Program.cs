@@ -52,13 +52,25 @@ Touch(Path.Combine(keep, "15-2 主图.psd"));
 Touch(Path.Combine(keep, "Thumbs.db"));
 Touch(Path.Combine(keep, "14-5 产品资料", "参数表.txt"));
 Touch(Path.Combine(excluded, "14-5 废稿.psd"));
+// 全组缩略图缓存放在共享盘目录里：里面的文件不能被当成素材索引
+var teamCache = Path.Combine(root, PathRules.TeamCacheFolderName, "thumbs-v1", "ab");
+Directory.CreateDirectory(teamCache);
+Touch(Path.Combine(teamCache, "ab14-5cache.sqt"));
 
 var indexPath = Path.Combine(Path.GetTempPath(), "sqs-core-index-" + Guid.NewGuid().ToString("N") + ".json");
 try
 {
     var index = new FileIndexService(indexPath);
     var built = await index.RebuildAsync(new[] { root }, new[] { excluded }, null, CancellationToken.None);
-    Check("扫描：条目数（排除目录、忽略 Thumbs.db）", built.EntryCount == 8, built.EntryCount.ToString());
+    Check("扫描：条目数（排除目录、忽略 Thumbs.db 和 .共享速搜缓存）", built.EntryCount == 8, built.EntryCount.ToString());
+    Check("扫描：.共享速搜缓存 里的文件一个都不进索引", !index.SnapshotEntries().Any(x => PathRules.IsInTeamCache(x.FullPath)));
+    var cacheChange = await index.ApplyChangesAsync(new[] { Path.Combine(teamCache, "ab14-5cache.sqt") }, new[] { excluded });
+    Check("增量：.共享速搜缓存 里的变化被忽略", cacheChange == 0 && !index.SnapshotEntries().Any(x => PathRules.IsInTeamCache(x.FullPath)), cacheChange.ToString());
+    Check("缓存目录识别：本身、里面算；名字相近的不算",
+        PathRules.IsInTeamCache(@"\\NAS\设计部\.共享速搜缓存") && PathRules.IsInTeamCache(@"\\NAS\设计部\.共享速搜缓存\thumbs-v1\a.sqt")
+        && !PathRules.IsInTeamCache(@"\\NAS\设计部\.共享速搜缓存备份\a.psd") && !PathRules.IsInTeamCache(@"\\NAS\设计部\共享速搜缓存\a.psd"));
+    Check("缓存目录识别：相似前缀后嵌套的缓存仍被排除",
+        PathRules.IsInTeamCache(@"\\NAS\设计部\.共享速搜缓存备份\.共享速搜缓存\thumbs-v1\a.sqt"));
     int Hits(string query, SearchCategory category = SearchCategory.All) => index.SearchDetailed(query, category, 100).TotalMatches;
 
     Check("搜索：14-5", Hits("14-5") >= 5, Hits("14-5").ToString());

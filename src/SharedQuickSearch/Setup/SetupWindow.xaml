@@ -54,7 +54,7 @@
                                     </Border>
                                     <Image Source="/Assets/共享速搜-icon.png" Width="48" Height="48" RenderOptions.BitmapScalingMode="HighQuality"/>
                                 </Grid>
-                                <TextBlock x:Name="WelcomeEyebrow" Text="版本 1.10.0" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock x:Name="WelcomeEyebrow" Text="版本 1.11.0" Style="{StaticResource FlowEyebrow}"/>
                                 <TextBlock Text="共享盘里的素材，输入就找到。" Style="{StaticResource FlowTitle}" FontSize="30"/>
                                 <TextBlock Style="{StaticResource FlowLead}" MaxWidth="560" HorizontalAlignment="Left"
                                            Text="把共享盘建成本机索引，按 SKU、文件名或拼音首字母秒搜，缩略图直接看，拖出去就是复制一份。"/>

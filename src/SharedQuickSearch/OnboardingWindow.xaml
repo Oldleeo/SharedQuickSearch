@@ -147,7 +147,7 @@
                         <Grid x:Name="PageRoots" Visibility="Collapsed">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <StackPanel Margin="0,10,0,0">
-                                <TextBlock Text="第 1 步 · 共 3 步" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="第 1 步 · 共 4 步" Style="{StaticResource FlowEyebrow}"/>
                                 <TextBlock Text="要搜哪些共享盘文件夹" Style="{StaticResource FlowTitle}"/>
                                 <TextBlock Style="{StaticResource FlowLead}" Text="可以加好几个。直接粘贴路径（比如 \\NAS\设计部 或 Z:\素材），或者点“浏览”选。加进来会马上检查能不能连上。"/>
                                 <Border Style="{StaticResource FlowRow}" Margin="0,18,0,0" Padding="14,5,5,5">
@@ -181,7 +181,7 @@
                         <Grid x:Name="PageExclude" Visibility="Collapsed">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                             <StackPanel Margin="0,10,0,0">
-                                <TextBlock Text="第 2 步 · 共 3 步" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="第 2 步 · 共 4 步" Style="{StaticResource FlowEyebrow}"/>
                                 <TextBlock Text="哪些文件夹不用录入" Style="{StaticResource FlowTitle}"/>
                                 <TextBlock x:Name="ExcludeLead" Style="{StaticResource FlowLead}" Text="打开开关的文件夹不会进索引。我在你的共享盘第一层找了一遍，回收站、缩略图缓存这类已经先帮你打开了。"/>
                             </StackPanel>
@@ -212,7 +212,7 @@
                         <!-- 选项 -->
                         <Grid x:Name="PageOptions" Visibility="Collapsed">
                             <StackPanel Margin="0,10,0,0">
-                                <TextBlock Text="第 3 步 · 共 3 步" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="第 3 步 · 共 4 步" Style="{StaticResource FlowEyebrow}"/>
                                 <TextBlock Text="几个小选项" Style="{StaticResource FlowTitle}"/>
                                 <TextBlock Style="{StaticResource FlowLead}" Text="都可以以后在设置里改。"/>
                                 <Border Style="{StaticResource FlowRow}" Margin="0,20,0,8">
@@ -240,7 +240,60 @@
                                     <TextBlock Text="呼出快捷键" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,12,0"/>
                                     <StackPanel x:Name="HotkeyCaps" Orientation="Horizontal"/>
                                     <TextBlock Text="在设置里可以换" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                    <Border Width="1" Height="16" Background="{DynamicResource StrokeBrush}" Margin="18,0,18,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="也可以双击 Ctrl" FontSize="12.5" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                               ToolTip="快速连按两下 Ctrl 呼出。需要一个全局键盘钩子，只看是不是 Ctrl，不记录任何按键。"/>
+                                    <CheckBox x:Name="DoubleCtrlCheck" Style="{StaticResource ToggleSwitch}" VerticalAlignment="Center"/>
                                 </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 缩略图缓存 -->
+                        <Grid x:Name="PageCache" Visibility="Collapsed">
+                            <StackPanel Margin="0,10,0,0">
+                                <TextBlock Text="第 4 步 · 共 4 步" Style="{StaticResource FlowEyebrow}"/>
+                                <TextBlock Text="缩略图存在哪" Style="{StaticResource FlowTitle}"/>
+                                <TextBlock Style="{StaticResource FlowLead}" Text="看过的缩略图会存起来，下次直接出来，不再读共享盘。以后在设置 → 缩略图里可以改。"/>
+
+                                <Border x:Name="CacheLocalCard" Style="{StaticResource FlowRow}" Margin="0,18,0,8" BorderThickness="1.5" Cursor="Hand" MouseLeftButtonUp="CacheLocalCard_Click">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <Grid Width="18" Height="18" VerticalAlignment="Top" Margin="0,1,14,0">
+                                            <Ellipse x:Name="CacheLocalRing" Stroke="{DynamicResource TextTertiaryBrush}" StrokeThickness="1.5"/>
+                                            <Ellipse x:Name="CacheLocalDot" Width="8" Height="8" Fill="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="只存在这台电脑上" Style="{StaticResource FlowItemTitle}"/>
+                                            <TextBlock x:Name="CacheLocalHint" Style="{StaticResource FlowItemHint}" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="换位置…" Height="30" Padding="12,0" Margin="16,0,0,0" VerticalAlignment="Center" Click="ChangeLocalCache_Click" Focusable="False"/>
+                                    </Grid>
+                                </Border>
+
+                                <Border x:Name="CacheTeamCard" Style="{StaticResource FlowRow}" BorderThickness="1.5" Cursor="Hand" MouseLeftButtonUp="CacheTeamCard_Click">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <Grid Width="18" Height="18" VerticalAlignment="Top" Margin="0,1,14,0">
+                                            <Ellipse x:Name="CacheTeamRing" Stroke="{DynamicResource TextTertiaryBrush}" StrokeThickness="1.5"/>
+                                            <Ellipse x:Name="CacheTeamDot" Width="8" Height="8" Fill="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="全组共用一份" Style="{StaticResource FlowItemTitle}"/>
+                                            <TextBlock Style="{StaticResource FlowItemHint}" Text="放在隐藏的 .共享速搜缓存 中。能读取该目录的人可以看到缩略图，不会自动继承原素材的权限；请先确认权限范围。只往这个缓存目录里写，不修改原素材。"/>
+                                            <StackPanel x:Name="CacheTeamPanel" Margin="0,10,0,0" Visibility="Collapsed">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="TeamCacheBox" FontFamily="{StaticResource MonoFont}" FontSize="12" Height="32" VerticalContentAlignment="Center" TextChanged="TeamCacheBox_TextChanged"/>
+                                                    <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="检查" Height="32" Padding="14,0" Click="CheckTeamCache_Click" Focusable="False"/>
+                                                </Grid>
+                                                <StackPanel Orientation="Horizontal" Margin="2,8,0,0">
+                                                    <Ellipse x:Name="TeamCacheDot" Width="7" Height="7" Fill="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                    <TextBlock x:Name="TeamCacheStatus" Text="还没检查" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
                             </StackPanel>
                         </Grid>
 

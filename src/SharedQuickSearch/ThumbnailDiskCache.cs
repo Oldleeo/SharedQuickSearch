@@ -1,6 +1,7 @@
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace SharedQuickSearch;
 
@@ -90,16 +91,8 @@ internal sealed class ThumbnailDiskCache
                 }
                 if (read < bytes.Length) return null;
             }
-            if (bytes.Length <= 16 || !bytes.AsSpan(0, 4).SequenceEqual(Magic))
-            {
-                TryDelete(path);
-                return null;
-            }
-            var width = BitConverter.ToInt32(bytes, 4);
-            var height = BitConverter.ToInt32(bytes, 8);
-            var flags = BitConverter.ToInt32(bytes, 12);
-            var image = ImageCodec.Decode(bytes, 16, bytes.Length - 16);
-            if (image is null) { TryDelete(path); return null; }
+            var decoded = Unpack(bytes);
+            if (decoded is null) { TryDelete(path); return null; }
 
             // 粗粒度 LRU：常用的缓存隔几天“碰一下”，清理时按修改时间淘汰最久没用的。
             try
@@ -108,9 +101,33 @@ internal sealed class ThumbnailDiskCache
                 if (DateTime.UtcNow - info.LastWriteTimeUtc > TouchAfter) info.LastWriteTimeUtc = DateTime.UtcNow;
             }
             catch { }
-            return new ThumbResult(image, width, height, (flags & 1) != 0);
+            return decoded;
         }
         catch { return null; }
+    }
+
+    /// <summary>.sqt 文件内容 → 缩略图。格式不对返回 null。本机缓存和全组缓存共用这个格式。</summary>
+    internal static ThumbResult? Unpack(byte[] bytes)
+    {
+        if (bytes.Length <= 16 || !bytes.AsSpan(0, 4).SequenceEqual(Magic)) return null;
+        var width = BitConverter.ToInt32(bytes, 4);
+        var height = BitConverter.ToInt32(bytes, 8);
+        var flags = BitConverter.ToInt32(bytes, 12);
+        var image = ImageCodec.Decode(bytes, 16, bytes.Length - 16);
+        return image is null ? null : new ThumbResult(image, width, height, (flags & 1) != 0);
+    }
+
+    /// <summary>缩略图 → .sqt 文件内容。</summary>
+    internal static byte[] Pack(ThumbResult result)
+    {
+        var encoded = ImageCodec.Encode(result.Image!);
+        var data = new byte[16 + encoded.Length];
+        Magic.CopyTo(data, 0);
+        BitConverter.GetBytes(result.Width).CopyTo(data, 4);
+        BitConverter.GetBytes(result.Height).CopyTo(data, 8);
+        BitConverter.GetBytes(result.LowQuality ? 1 : 0).CopyTo(data, 12);
+        encoded.CopyTo(data, 16);
+        return data;
     }
 
     public void Write(string key, ThumbResult result)
@@ -119,13 +136,7 @@ internal sealed class ThumbnailDiskCache
         string? temporary = null;
         try
         {
-            var encoded = ImageCodec.Encode(result.Image);
-            var data = new byte[16 + encoded.Length];
-            Magic.CopyTo(data, 0);
-            BitConverter.GetBytes(result.Width).CopyTo(data, 4);
-            BitConverter.GetBytes(result.Height).CopyTo(data, 8);
-            BitConverter.GetBytes(result.LowQuality ? 1 : 0).CopyTo(data, 12);
-            encoded.CopyTo(data, 16);
+            var data = Pack(result);
 
             var path = PathFor(key);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -152,7 +163,7 @@ internal sealed class ThumbnailDiskCache
         try
         {
             if (!Directory.Exists(_folder)) return (0, 0);
-            foreach (var file in new DirectoryInfo(_folder).EnumerateFiles("*.sqt", SearchOption.AllDirectories))
+            foreach (var file in OwnedFiles().Where(file => file.Extension.Equals(".sqt", StringComparison.OrdinalIgnoreCase)))
             {
                 bytes += file.Length;
                 files++;
@@ -169,7 +180,7 @@ internal sealed class ThumbnailDiskCache
         try
         {
             if (!Directory.Exists(_folder)) { Interlocked.Exchange(ref _sizeBytes, 0); return; }
-            var files = new DirectoryInfo(_folder).EnumerateFiles("*", SearchOption.AllDirectories).ToList();
+            var files = OwnedFiles().ToList();
             // 只清理一分钟前的临时文件：会话中途也会 Trim，不能删掉正在写的那个
             var staleBefore = DateTime.UtcNow.AddMinutes(-1);
             foreach (var stale in files.Where(x => x.Extension.Equals(".tmp", StringComparison.OrdinalIgnoreCase) && x.LastWriteTimeUtc < staleBefore)) TryDelete(stale.FullName);
@@ -193,8 +204,25 @@ internal sealed class ThumbnailDiskCache
 
     public void Clear()
     {
-        try { if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true); } catch { }
+        // Custom cache locations may contain unrelated files. Remove only our hashed cache files,
+        // and never follow a junction or symlink into another directory.
+        try { foreach (var file in OwnedFiles()) TryDelete(file.FullName); } catch { }
         Interlocked.Exchange(ref _sizeBytes, 0);
+    }
+
+    private IEnumerable<FileInfo> OwnedFiles()
+    {
+        if (!Directory.Exists(_folder) || (File.GetAttributes(_folder) & FileAttributes.ReparsePoint) != 0) yield break;
+        foreach (var shard in new DirectoryInfo(_folder).EnumerateDirectories())
+        {
+            if ((shard.Attributes & FileAttributes.ReparsePoint) != 0 || !Regex.IsMatch(shard.Name, "^[a-fA-F0-9]{2}$")) continue;
+            foreach (var file in shard.EnumerateFiles())
+            {
+                if ((file.Attributes & FileAttributes.ReparsePoint) == 0 &&
+                    Regex.IsMatch(file.Name, "^[a-fA-F0-9]{40}\\.(sqt|none)(\\.[a-fA-F0-9]{32}\\.tmp)?$", RegexOptions.IgnoreCase) &&
+                    file.Name.StartsWith(shard.Name, StringComparison.OrdinalIgnoreCase)) yield return file;
+            }
+        }
     }
 
     private static bool TryDelete(string path)
