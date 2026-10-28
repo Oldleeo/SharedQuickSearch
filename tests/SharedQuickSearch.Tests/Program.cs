@@ -1,4 +1,5 @@
 using SharedQuickSearch;
+using System.IO;
 
 var failures = new List<string>();
 void Check(string name, bool value)
@@ -105,6 +106,8 @@ var ai = System.Text.Encoding.ASCII.GetBytes("%PDF-1.6\n" + new string('%', 600 
 Check("AI XMP 缩略图（600KB 之后）", EmbeddedThumbnailLocator.Locate(new MemoryStream(ai), ".ai")?.ImageBytes?.Length == tinyJpeg.Length);
 Check("普通 PDF 无内嵌图", EmbeddedThumbnailLocator.Locate(new MemoryStream(System.Text.Encoding.ASCII.GetBytes("%PDF-1.4\n%%EOF")), ".pdf") is null);
 Check("损坏 PSD 不抛异常", EmbeddedThumbnailLocator.Locate(new MemoryStream(psd[..40]), ".psd") is not null);
+
+await ReleaseFeatureTests.Run((name, passed) => Check(name, passed));
 
 if (failures.Count > 0)
 {

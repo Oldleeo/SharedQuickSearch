@@ -72,6 +72,8 @@ public sealed class IndexMonitorService : IDisposable
 
     private void Queue(string path)
     {
+        // 全组缩略图缓存在共享盘上不停地写：这些变化不是素材变化，直接丢掉，也不触发防抖
+        if (PathRules.IsInTeamCache(path)) return;
         if (!PathRules.IsExcluded(path, _exclusions)) _changed[PathRules.Normalize(path)] = 0;
         _debounce.Change(650, Timeout.Infinite);
     }

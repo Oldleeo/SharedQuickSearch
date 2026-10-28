@@ -477,6 +477,7 @@ public sealed class FileIndexService : IDisposable
 
         foreach (var path in paths)
         {
+            if (PathRules.IsInTeamCache(path)) continue;
             if (PathRules.IsExcluded(path, exclusions))
             {
                 if (map.Remove(path, out var gone)) { changed++; if (gone.Entry.IsDirectory) removedPrefixes.Add(path); }
@@ -738,8 +739,10 @@ public sealed class FileIndexService : IDisposable
     private static long TryGetLength(FileInfo file) { try { return file.Length; } catch { return 0; } }
     private static DateTime TryGetModified(FileSystemInfo info) { try { return info.LastWriteTimeUtc; } catch { return DateTime.MinValue; } }
     private static DateTime TryGetCreated(FileSystemInfo info) { try { return info.CreationTimeUtc; } catch { return DateTime.MinValue; } }
-    private static bool IsBuiltInIgnored(FileSystemInfo info) => info is FileInfo && BuiltInIgnoredFileNames.Contains(info.Name);
-    private static bool IsBuiltInIgnored(FileEntry entry) => !entry.IsDirectory && BuiltInIgnoredFileNames.Contains(entry.Name);
+    private static bool IsBuiltInIgnored(FileSystemInfo info) =>
+        (info is FileInfo && BuiltInIgnoredFileNames.Contains(info.Name)) || PathRules.IsInTeamCache(info.FullName);
+    private static bool IsBuiltInIgnored(FileEntry entry) =>
+        (!entry.IsDirectory && BuiltInIgnoredFileNames.Contains(entry.Name)) || PathRules.IsInTeamCache(entry.FullPath);
 
     private static IndexProgress CreateProgress(int scanned, int processedDirectories, int pendingDirectories, DateTime started, string currentPath)
     {

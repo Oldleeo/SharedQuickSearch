@@ -33,6 +33,16 @@ public static partial class PathRules
 
     public static char Separator => OperatingSystem.IsWindows() ? '\\' : '/';
 
+    /// <summary>全组共用缩略图缓存的文件夹名。索引、实时监听都跳过它，缓存文件不会被当成素材搜出来。</summary>
+    public const string TeamCacheFolderName = ".共享速搜缓存";
+
+    /// <summary>路径就是缓存文件夹，或者在它里面。</summary>
+    public static bool IsInTeamCache(string path)
+    {
+        return path.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries)
+            .Any(part => part.Equals(TeamCacheFolderName, StringComparison.OrdinalIgnoreCase));
+    }
+
     public static bool IsSameOrChild(string candidate, string parent)
     {
         var child = Normalize(candidate);

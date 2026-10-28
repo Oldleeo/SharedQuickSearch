@@ -20,17 +20,22 @@ public partial class SettingsWindow : Window
 
     private readonly AppSettings _source;
     private readonly ThumbnailService? _thumbnails;
+    private readonly Func<int>? _previewableCount;
+    private string _cacheFolderChoice;
+    private int _previewable = -1;
     private readonly string _originalTheme;
     private string _selectedTheme;
     private bool _loading = true;
 
-    public SettingsWindow(Window? owner, AppSettings settings, ThumbnailService? thumbnails = null)
+    public SettingsWindow(Window? owner, AppSettings settings, ThumbnailService? thumbnails = null, Func<int>? previewableCount = null)
     {
         InitializeComponent();
         if (owner is { IsVisible: true }) Owner = owner;
         else WindowStartupLocation = WindowStartupLocation.CenterScreen;
         _thumbnails = thumbnails;
+        _previewableCount = previewableCount;
         _source = settings.Clone();
+        _cacheFolderChoice = _source.ThumbnailCacheFolder;
         _originalTheme = ThemeManager.Normalize(_source.Theme);
         _selectedTheme = _originalTheme;
 
@@ -45,7 +50,7 @@ public partial class SettingsWindow : Window
         SpotlightCheck.IsChecked = _source.LaunchMode != "Window";
         ClipboardCheck.IsChecked = _source.ClipboardPrefill;
         HotkeyBox.Text = string.IsNullOrWhiteSpace(_source.GlobalHotkey) ? "Ctrl+Alt+Space" : _source.GlobalHotkey;
-        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.10.0");
+        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.11.0");
         VersionText.Text = version;
         NavVersionText.Text = version;
 
@@ -58,7 +63,17 @@ public partial class SettingsWindow : Window
         (_originalTheme switch { ThemeManager.Light => ThemeLight, ThemeManager.Dark => ThemeDark, _ => ThemeSystem }).IsChecked = true;
 
         PrefetchCheck.IsChecked = _source.ThumbnailPrefetch;
-        CacheFolderText.Text = thumbnails?.CacheFolder ?? ThumbnailService.DefaultFolder;
+        CacheFolderText.Text = thumbnails?.CacheFolder ?? ThumbnailService.ResolveLocalFolder(_source.ThumbnailCacheFolder);
+        DoubleCtrlCheck.IsChecked = _source.DoubleCtrlSummon;
+        TeamCacheBox.Text = _source.TeamCacheFolder;
+        TeamCacheCheck.IsChecked = _source.TeamCacheFolder.Length > 0;
+        TeamCachePanel.Visibility = TeamCacheCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (thumbnails is not null)
+        {
+            thumbnails.TeamStateChanged += ShowTeamState;
+            Closed += (_, _) => thumbnails.TeamStateChanged -= ShowTeamState;
+        }
+        ShowTeamState();
         var limitItem = CacheLimitBox.Items.OfType<ComboBoxItem>().FirstOrDefault(x => x.Tag as string == _source.ThumbnailCacheLimitMb.ToString());
         CacheLimitBox.SelectedItem = limitItem ?? CacheLimitBox.Items[2];
 
@@ -131,6 +146,88 @@ public partial class SettingsWindow : Window
         ShowUpdateStatus();
     }
 
+    // ================= 缓存位置 =================
+
+    private void ChangeCacheFolder_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog { Description = "选择本机缩略图缓存的位置（会在里面建一个“共享速搜缩略图”文件夹）", UseDescriptionForTitle = true, ShowNewFolderButton = true };
+        if (dialog.ShowDialog() != Forms.DialogResult.OK) return;
+        if (!Setup.InstallerEngine.IsLocalPath(dialog.SelectedPath))
+        {
+            ModernDialog.Show(this, "本机缓存要放在这台电脑的硬盘上。想全组共用，用下面的“全组共用缩略图缓存”。", "缓存位置", MessageBoxImage.Warning);
+            return;
+        }
+        var resolved = ThumbnailService.ResolveLocalFolder(dialog.SelectedPath);
+        _cacheFolderChoice = string.Equals(resolved, ThumbnailService.DefaultFolder, StringComparison.OrdinalIgnoreCase) ? "" : dialog.SelectedPath;
+        CacheFolderText.Text = resolved;
+        CacheFolderHint.Text = "保存后生效：新位置从空开始，旧位置的缓存会删掉。";
+        CacheFolderHint.Visibility = Visibility.Visible;
+    }
+
+    private void TeamCacheCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (TeamCachePanel is null) return;
+        var on = TeamCacheCheck.IsChecked == true;
+        TeamCachePanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (on && !_loading) Ui.FadeIn(TeamCachePanel, offsetY: 6, milliseconds: 200);
+        // 打开时还没填：按第一个共享盘目录给个建议
+        if (on && TeamCacheBox.Text.Trim().Length == 0 && TeamThumbnailCache.SuggestFor(Roots) is { } suggestion)
+            TeamCacheBox.Text = suggestion;
+        ShowTeamState();
+    }
+
+    private void TeamCacheBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_loading) ShowTeamState();
+    }
+
+    private void BrowseTeamCache_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog { Description = "选择共享盘上放全组缓存的位置（会在里面建一个隐藏的 .共享速搜缓存 文件夹）", UseDescriptionForTitle = true, ShowNewFolderButton = false };
+        if (dialog.ShowDialog() != Forms.DialogResult.OK) return;
+        TeamCacheBox.Text = TeamThumbnailCache.NormalizeFolder(dialog.SelectedPath);
+    }
+
+    private async void CheckTeamCache_Click(object sender, RoutedEventArgs e)
+    {
+        var path = TeamCacheBox.Text.Trim();
+        if (path.Length == 0) return;
+        if (Setup.InstallerEngine.IsLocalPath(path))
+        {
+            SetTeamStatus("这是本机硬盘上的位置，同事访问不到。要选共享盘上的文件夹。", "WarningBrush");
+            return;
+        }
+        SetTeamStatus("正在检查…", "AccentBrush");
+        var probe = new TeamThumbnailCache(path);
+        var state = await probe.ProbeAsync();
+        TeamCacheBox.Text = probe.Folder;
+        SetTeamStatus(probe.Describe(), state switch { TeamCacheState.ReadWrite => "SuccessBrush", TeamCacheState.ReadOnly => "AccentBrush", _ => "WarningBrush" });
+    }
+
+    private void ShowTeamState()
+    {
+        if (!Dispatcher.CheckAccess()) { Dispatcher.InvokeAsync(ShowTeamState); return; }
+        if (TeamCacheCheck.IsChecked != true) return;
+        var path = TeamCacheBox.Text.Trim();
+        var live = _thumbnails?.Team;
+        if (live is not null && path.Length > 0 && string.Equals(TeamThumbnailCache.NormalizeFolder(path), live.Folder, StringComparison.OrdinalIgnoreCase))
+            SetTeamStatus(live.Describe(), live.State switch { TeamCacheState.ReadWrite => "SuccessBrush", TeamCacheState.ReadOnly or TeamCacheState.Checking => "AccentBrush", _ => "WarningBrush" });
+        else SetTeamStatus(path.Length == 0 ? "填一个共享盘上的位置，比如 \\\\NAS\\设计部" : "还没检查，点“检查”看看能不能读写", "TextTertiaryBrush");
+
+        // 20 万条索引数一遍要几十毫秒：只数一次
+        if (_previewable < 0) _previewable = _previewableCount?.Invoke() ?? 0;
+        var count = _previewable;
+        TeamCacheEstimate.Text = count > 0
+            ? $"索引里有 {count:N0} 个能出缩略图的文件，全部有人看过一遍的话大约 {FormatBytes(count * 20L * 1024)}（每张约 20 KB；后台预热生成的不上传，只放真有人看过的）。"
+            : "每张缩略图约 20 KB：1 万张约 200 MB，10 万张约 2 GB。";
+    }
+
+    private void SetTeamStatus(string text, string brush)
+    {
+        TeamCacheStatus.Text = text;
+        TeamCacheDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, brush);
+    }
+
     // ================= 缩略图 =================
 
     private async Task RefreshThumbnailInfoAsync()
@@ -142,6 +239,7 @@ public partial class SettingsWindow : Window
         StatEmbedded.Text = stats.Embedded.ToString("N0");
         StatGenerated.Text = stats.Generated.ToString("N0");
         StatAverage.Text = stats.Disk + stats.WindowsCache + stats.Embedded + stats.Generated == 0 ? "—" : $"{stats.AverageMilliseconds:F0} ms";
+        StatTeam.Text = _thumbnails.Team is null ? "未开启" : $"{stats.Team:N0} / {stats.TeamWrites:N0}";
         StatPrefetch.Text = stats.PrefetchTotal == 0 ? (stats.PrefetchRunning ? "准备中" : "—")
             : stats.PrefetchRunning ? $"{stats.PrefetchDone * 100.0 / stats.PrefetchTotal:F0}%" : $"{stats.PrefetchDone:N0} 张";
         CacheSizeText.Text = "正在统计…";
@@ -277,6 +375,20 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        var teamFolder = TeamCacheCheck.IsChecked == true ? TeamCacheBox.Text.Trim() : "";
+        if (TeamCacheCheck.IsChecked == true && teamFolder.Length == 0)
+        {
+            SelectPage(4);
+            ModernDialog.Show(this, "开了全组共用缓存，但没有填位置。填一个共享盘上的文件夹，或者把开关关掉。", "全组缓存", MessageBoxImage.Warning);
+            return;
+        }
+        if (teamFolder.Length > 0 && Setup.InstallerEngine.IsLocalPath(teamFolder))
+        {
+            SelectPage(4);
+            ModernDialog.Show(this, "全组缓存要放在共享盘上（\\\\服务器\\… 或映射的网络盘），本机硬盘上的位置同事访问不到。", "全组缓存", MessageBoxImage.Warning);
+            return;
+        }
+
         if (UpdateFeedBox.Text.Trim().StartsWith("http://", StringComparison.OrdinalIgnoreCase))
         {
             SelectPage(3);
@@ -303,6 +415,9 @@ public partial class SettingsWindow : Window
         SavedSettings.Theme = _selectedTheme;
         SavedSettings.ThumbnailPrefetch = PrefetchCheck.IsChecked == true;
         SavedSettings.UpdateFeed = UpdateFeedBox.Text.Trim();
+        SavedSettings.DoubleCtrlSummon = DoubleCtrlCheck.IsChecked == true;
+        SavedSettings.ThumbnailCacheFolder = _cacheFolderChoice;
+        SavedSettings.TeamCacheFolder = teamFolder.Length == 0 ? "" : TeamThumbnailCache.NormalizeFolder(teamFolder);
         if (CacheLimitBox.SelectedItem is ComboBoxItem { Tag: string limit } && int.TryParse(limit, out var megabytes)) SavedSettings.ThumbnailCacheLimitMb = megabytes;
         DialogResult = true;
     }

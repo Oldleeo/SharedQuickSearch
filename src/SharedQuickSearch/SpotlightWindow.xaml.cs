@@ -131,6 +131,7 @@ public partial class SpotlightWindow : Window
     /// <summary>主窗口真正退出时调用；其他时候（比如 Alt+F4）只是收起。</summary>
     public void CloseForExit()
     {
+        FlushTray();
         _allowClose = true;
         Close();
     }
