@@ -23,6 +23,8 @@ public partial class SettingsWindow : Window
     private readonly Func<int>? _previewableCount;
     private string _cacheFolderChoice;
     private int _previewable = -1;
+    private string _teamMode = TeamCacheModes.Auto;
+    private bool _settingTeamBox;
     private readonly string _originalTheme;
     private string _selectedTheme;
     private bool _loading = true;
@@ -50,7 +52,7 @@ public partial class SettingsWindow : Window
         SpotlightCheck.IsChecked = _source.LaunchMode != "Window";
         ClipboardCheck.IsChecked = _source.ClipboardPrefill;
         HotkeyBox.Text = string.IsNullOrWhiteSpace(_source.GlobalHotkey) ? "Ctrl+Alt+Space" : _source.GlobalHotkey;
-        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.11.0");
+        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.12.0");
         VersionText.Text = version;
         NavVersionText.Text = version;
 
@@ -65,8 +67,10 @@ public partial class SettingsWindow : Window
         PrefetchCheck.IsChecked = _source.ThumbnailPrefetch;
         CacheFolderText.Text = thumbnails?.CacheFolder ?? ThumbnailService.ResolveLocalFolder(_source.ThumbnailCacheFolder);
         DoubleCtrlCheck.IsChecked = _source.DoubleCtrlSummon;
-        TeamCacheBox.Text = _source.TeamCacheFolder;
-        TeamCacheCheck.IsChecked = _source.TeamCacheFolder.Length > 0;
+        PublishIndexCheck.IsChecked = _source.PublishSharedIndex;
+        _teamMode = TeamCacheModes.Normalize(_source.TeamCacheMode);
+        SetTeamBox(_source.TeamCacheFolder);
+        TeamCacheCheck.IsChecked = _teamMode != TeamCacheModes.Off;
         TeamCachePanel.Visibility = TeamCacheCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         if (thumbnails is not null)
         {
@@ -170,22 +174,54 @@ public partial class SettingsWindow : Window
         var on = TeamCacheCheck.IsChecked == true;
         TeamCachePanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         if (on && !_loading) Ui.FadeIn(TeamCachePanel, offsetY: 6, milliseconds: 200);
-        // 打开时还没填：按第一个共享盘目录给个建议
-        if (on && TeamCacheBox.Text.Trim().Length == 0 && TeamThumbnailCache.SuggestFor(Roots) is { } suggestion)
-            TeamCacheBox.Text = suggestion;
+        if (on && _teamMode == TeamCacheModes.Off) _teamMode = TeamCacheModes.Auto;
         ShowTeamState();
     }
 
     private void TeamCacheBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (!_loading) ShowTeamState();
+        if (_loading || _settingTeamBox) return;
+        _teamMode = TeamCacheBox.Text.Trim().Length == 0 ? TeamCacheModes.Auto : TeamCacheModes.Manual; // 自己填了位置 = 不再自动找
+        ShowTeamState();
+    }
+
+    private void SetTeamBox(string text)
+    {
+        _settingTeamBox = true;
+        try { TeamCacheBox.Text = text; }
+        finally { _settingTeamBox = false; }
+    }
+
+    private async void AutoFindTeamCache_Click(object sender, RoutedEventArgs e)
+    {
+        _teamMode = TeamCacheModes.Auto;
+        var roots = Roots.ToList();
+        if (TeamCacheLocator.Candidates(roots).Count == 0)
+        {
+            SetTeamStatus("索引目录都在本机，没有共享盘可以放全组缓存。", "WarningBrush");
+            return;
+        }
+        SetTeamStatus("正在共享盘上找 .共享速搜缓存…", "AccentBrush");
+        var found = await TeamCacheLocator.FindOrCreateAsync(roots, create: false);
+        if (found is not null)
+        {
+            SetTeamBox(found);
+            SetTeamStatus("找到了：同事已经在用这个，保存后直接共用", "SuccessBrush");
+        }
+        else
+        {
+            SetTeamBox("");
+            SetTeamStatus($"还没有人建过。保存后会自动在 {TeamThumbnailCache.SuggestFor(roots)} 新建（那里不能写就往下一层找）", "TextTertiaryBrush");
+        }
     }
 
     private void BrowseTeamCache_Click(object sender, RoutedEventArgs e)
     {
         using var dialog = new Forms.FolderBrowserDialog { Description = "选择共享盘上放全组缓存的位置（会在里面建一个隐藏的 .共享速搜缓存 文件夹）", UseDescriptionForTitle = true, ShowNewFolderButton = false };
         if (dialog.ShowDialog() != Forms.DialogResult.OK) return;
-        TeamCacheBox.Text = TeamThumbnailCache.NormalizeFolder(dialog.SelectedPath);
+        _teamMode = TeamCacheModes.Manual;
+        SetTeamBox(TeamThumbnailCache.NormalizeFolder(dialog.SelectedPath));
+        ShowTeamState();
     }
 
     private async void CheckTeamCache_Click(object sender, RoutedEventArgs e)
@@ -200,7 +236,7 @@ public partial class SettingsWindow : Window
         SetTeamStatus("正在检查…", "AccentBrush");
         var probe = new TeamThumbnailCache(path);
         var state = await probe.ProbeAsync();
-        TeamCacheBox.Text = probe.Folder;
+        SetTeamBox(probe.Folder);
         SetTeamStatus(probe.Describe(), state switch { TeamCacheState.ReadWrite => "SuccessBrush", TeamCacheState.ReadOnly => "AccentBrush", _ => "WarningBrush" });
     }
 
@@ -212,7 +248,7 @@ public partial class SettingsWindow : Window
         var live = _thumbnails?.Team;
         if (live is not null && path.Length > 0 && string.Equals(TeamThumbnailCache.NormalizeFolder(path), live.Folder, StringComparison.OrdinalIgnoreCase))
             SetTeamStatus(live.Describe(), live.State switch { TeamCacheState.ReadWrite => "SuccessBrush", TeamCacheState.ReadOnly or TeamCacheState.Checking => "AccentBrush", _ => "WarningBrush" });
-        else SetTeamStatus(path.Length == 0 ? "填一个共享盘上的位置，比如 \\\\NAS\\设计部" : "还没检查，点“检查”看看能不能读写", "TextTertiaryBrush");
+        else SetTeamStatus(path.Length == 0 ? "自动：保存后在共享盘上找同事建好的 .共享速搜缓存，没有就新建一个" : "还没检查，点“检查”看看能不能读写", "TextTertiaryBrush");
 
         // 20 万条索引数一遍要几十毫秒：只数一次
         if (_previewable < 0) _previewable = _previewableCount?.Invoke() ?? 0;
@@ -375,8 +411,10 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        var teamFolder = TeamCacheCheck.IsChecked == true ? TeamCacheBox.Text.Trim() : "";
-        if (TeamCacheCheck.IsChecked == true && teamFolder.Length == 0)
+        var teamOn = TeamCacheCheck.IsChecked == true;
+        var teamMode = !teamOn ? TeamCacheModes.Off : _teamMode == TeamCacheModes.Off ? TeamCacheModes.Auto : _teamMode;
+        var teamFolder = teamOn ? TeamCacheBox.Text.Trim() : "";
+        if (teamMode == TeamCacheModes.Manual && teamFolder.Length == 0)
         {
             SelectPage(4);
             ModernDialog.Show(this, "开了全组共用缓存，但没有填位置。填一个共享盘上的文件夹，或者把开关关掉。", "全组缓存", MessageBoxImage.Warning);
@@ -417,7 +455,10 @@ public partial class SettingsWindow : Window
         SavedSettings.UpdateFeed = UpdateFeedBox.Text.Trim();
         SavedSettings.DoubleCtrlSummon = DoubleCtrlCheck.IsChecked == true;
         SavedSettings.ThumbnailCacheFolder = _cacheFolderChoice;
-        SavedSettings.TeamCacheFolder = teamFolder.Length == 0 ? "" : TeamThumbnailCache.NormalizeFolder(teamFolder);
+        SavedSettings.TeamCacheMode = teamMode;
+        SavedSettings.PublishSharedIndex = PublishIndexCheck.IsChecked == true;
+        // 关掉时记住原来的位置，再打开不用重新找
+        SavedSettings.TeamCacheFolder = !teamOn ? _source.TeamCacheFolder : teamFolder.Length == 0 ? "" : TeamThumbnailCache.NormalizeFolder(teamFolder);
         if (CacheLimitBox.SelectedItem is ComboBoxItem { Tag: string limit } && int.TryParse(limit, out var megabytes)) SavedSettings.ThumbnailCacheLimitMb = megabytes;
         DialogResult = true;
     }

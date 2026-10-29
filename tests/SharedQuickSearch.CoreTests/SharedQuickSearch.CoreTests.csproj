@@ -13,6 +13,9 @@
     <Compile Include="..\..\src\SharedQuickSearch\UpdateRules.cs" />
     <Compile Include="..\..\src\SharedQuickSearch\UpdateFileTransaction.cs" />
     <Compile Include="..\..\src\SharedQuickSearch\UpdateHealth.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\UncPaths.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\TeamCacheLocator.cs" />
+    <Compile Include="..\..\src\SharedQuickSearch\TeamIndexShare.cs" />
     <Compile Include="..\..\src\SharedQuickSearch\NaturalStringComparer.cs" />
     <Compile Include="..\..\src\SharedQuickSearch\Models.cs" />
     <Compile Include="..\..\src\SharedQuickSearch\QueryParser.cs" />

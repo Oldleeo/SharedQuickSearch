@@ -28,7 +28,6 @@ internal sealed class TeamThumbnailCache
     private const string StoreName = "thumbs-v1";
     private static readonly TimeSpan OfflinePause = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan SlowRead = TimeSpan.FromSeconds(3);
-    private static readonly ConcurrentDictionary<char, (string? Unc, DateTime At)> DriveMap = new();
 
     private readonly SemaphoreSlim _writes = new(2);
     private readonly SemaphoreSlim _reads = new(2);
@@ -69,17 +68,8 @@ internal sealed class TeamThumbnailCache
     /// 建议的位置：第一个共享盘目录所在的共享根目录（\\服务器\共享），而不是索引目录里面，
     /// 这样同事写缓存时，索引目录的实时监听收到的事件少很多。
     /// </summary>
-    public static string? SuggestFor(IEnumerable<string> roots)
-    {
-        foreach (var root in roots)
-        {
-            var unc = ToUnc(PathRules.Normalize(root));
-            if (unc is null) continue;
-            var parts = unc.TrimStart('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2) return NormalizeFolder($@"\\{parts[0]}\{parts[1]}");
-        }
-        return null;
-    }
+    public static string? SuggestFor(IEnumerable<string> roots) =>
+        TeamCacheLocator.Candidates(roots).FirstOrDefault() is { } shareRoot ? NormalizeFolder(shareRoot) : null;
 
     // ================= 状态检查 =================
 
@@ -129,17 +119,7 @@ internal sealed class TeamThumbnailCache
         catch { return TeamCacheState.Offline; }
     }
 
-    private void WriteReadme()
-    {
-        try
-        {
-            File.WriteAllText(Path.Combine(Folder, "这是什么.txt"),
-                "这是“共享速搜”的全组共用缩略图缓存。\r\n" +
-                "里面只有缩略图（每张大约 20 KB），没有原文件。删掉不会丢任何素材，只是大家下次看图要重新生成。\r\n" +
-                "共享速搜只往这个文件夹里写，共享盘上别的文件一律只读。\r\n", Encoding.UTF8);
-        }
-        catch { }
-    }
+    private void WriteReadme() => TeamCacheLocator.WriteReadme(Folder);
 
     // ================= 键：统一成 \\服务器\共享 路径 =================
 
@@ -152,35 +132,8 @@ internal sealed class TeamThumbnailCache
         return Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
     }
 
-    /// <summary>Z:\设计部\a.psd → \\NAS\共享\设计部\a.psd；已经是 \\ 开头的原样返回；本机盘返回 null。</summary>
-    public static string? ToUnc(string path)
-    {
-        if (path.StartsWith(@"\\", StringComparison.Ordinal)) return path.StartsWith(@"\\?\", StringComparison.Ordinal) ? null : path;
-        if (path.Length < 3 || path[1] != ':' || !char.IsLetter(path[0])) return null;
-        var drive = char.ToUpperInvariant(path[0]);
-        // 映射关系很少变：每个盘符 5 分钟问一次 Windows
-        if (!DriveMap.TryGetValue(drive, out var mapped) || DateTime.UtcNow - mapped.At > TimeSpan.FromMinutes(5))
-        {
-            mapped = (QueryDriveUnc(drive), DateTime.UtcNow);
-            DriveMap[drive] = mapped;
-        }
-        return mapped.Unc is null ? null : mapped.Unc.TrimEnd('\\') + path[2..];
-    }
-
-    [DllImport("mpr.dll", CharSet = CharSet.Unicode)]
-    private static extern int WNetGetConnection(string localName, StringBuilder remoteName, ref int length);
-
-    private static string? QueryDriveUnc(char drive)
-    {
-        if (!OperatingSystem.IsWindows()) return null;
-        try
-        {
-            var length = 512;
-            var buffer = new StringBuilder(length);
-            return WNetGetConnection($"{drive}:", buffer, ref length) == 0 && buffer.Length > 2 ? buffer.ToString() : null;
-        }
-        catch { return null; }
-    }
+    /// <summary>Z:\设计部\a.psd → \\NAS\共享\设计部\a.psd；见 <see cref="UncPaths.ToUnc"/>。</summary>
+    public static string? ToUnc(string path) => UncPaths.ToUnc(path);
 
     // ================= 读写 =================
 

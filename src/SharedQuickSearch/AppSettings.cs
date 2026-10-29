@@ -33,10 +33,19 @@ public sealed class AppSettings
     public string UpdateFeed { get; set; } = "";
     /// <summary>本机缩略图缓存放哪：空 = %LocalAppData%\Oldlee\共享速搜\thumbs；否则是选的文件夹下的“共享速搜缩略图”。</summary>
     public string ThumbnailCacheFolder { get; set; } = "";
-    /// <summary>全组共用缩略图缓存：共享盘上的 .共享速搜缓存 文件夹；空 = 不用。</summary>
+    /// <summary>
+    /// 全组共用缓存（缩略图 + 共享索引）：
+    /// Auto（默认）= 自动在共享盘上找 .共享速搜缓存，没有就建一个；Manual = 用 TeamCacheFolder 指定的；Off = 不用。
+    /// </summary>
+    public string TeamCacheMode { get; set; } = TeamCacheModes.Auto;
+    /// <summary>全组共用缓存的位置（共享盘上的 .共享速搜缓存）。Auto 模式下是上次自动找到的。</summary>
     public string TeamCacheFolder { get; set; } = "";
     /// <summary>双击 Ctrl 呼出（需要全局键盘钩子，默认关）。</summary>
     public bool DoubleCtrlSummon { get; set; }
+    /// <summary>还欠一次完整扫描（用了同事的共享索引、或者迁移了旧索引）。完整扫描没出错地做完才清掉，中途退出下次启动接着做。</summary>
+    public bool FullScanOwed { get; set; }
+    /// <summary>把自己扫好的索引放进全组缓存给同事用。权限比别人大的电脑（老板、管理员）关掉。</summary>
+    public bool PublishSharedIndex { get; set; } = true;
 
     public AppSettings Clone() => new()
     {
@@ -63,9 +72,24 @@ public sealed class AppSettings
         OnboardingDone = OnboardingDone,
         UpdateFeed = UpdateFeed,
         ThumbnailCacheFolder = ThumbnailCacheFolder,
+        TeamCacheMode = TeamCacheMode,
         TeamCacheFolder = TeamCacheFolder,
-        DoubleCtrlSummon = DoubleCtrlSummon
+        DoubleCtrlSummon = DoubleCtrlSummon,
+        FullScanOwed = FullScanOwed,
+        PublishSharedIndex = PublishSharedIndex
     };
+}
+
+public static class TeamCacheModes
+{
+    public const string Auto = "Auto";
+    public const string Manual = "Manual";
+    public const string Off = "Off";
+
+    public static string Normalize(string? value) =>
+        string.Equals(value, Off, StringComparison.OrdinalIgnoreCase) ? Off
+        : string.Equals(value, Manual, StringComparison.OrdinalIgnoreCase) ? Manual
+        : Auto;
 }
 
 public static class SettingsStore

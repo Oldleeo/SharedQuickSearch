@@ -77,7 +77,7 @@
                         <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE946;" Margin="0,0,12,0"/><TextBlock Text="关于"/></StackPanel>
                     </RadioButton>
                 </StackPanel>
-                <TextBlock x:Name="NavVersionText" Text="版本 1.11.0" Style="{StaticResource Caption}" VerticalAlignment="Bottom" Margin="28,0,0,18"/>
+                <TextBlock x:Name="NavVersionText" Text="版本 1.12.0" Style="{StaticResource Caption}" VerticalAlignment="Bottom" Margin="28,0,0,18"/>
             </Grid>
 
             <!-- ============ 右侧内容 ============ -->
@@ -296,22 +296,33 @@
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <StackPanel>
                                             <TextBlock Text="全组共用缩略图缓存" Style="{StaticResource SettingTitle}"/>
-                                            <TextBlock Text="在共享盘上建隐藏的 .共享速搜缓存，共用已生成的缩略图，索引会跳过它。缓存可被该目录的读者看到，不会自动继承每份原素材的权限；请选好权限范围，敏感素材不要写入权限更宽的缓存。默认关闭。" Style="{StaticResource SettingHint}"/>
+                                            <TextBlock Text="默认开启：自动寻找共享盘上的隐藏目录 .共享速搜缓存，没有就尝试创建。共用缩略图和完整扫描生成的索引，新电脑有兼容快照时可先用它搜索，再后台完整核对；没有可用快照则自行扫描。只在该缓存目录中写入。" Style="{StaticResource SettingHint}"/>
+                                            <TextBlock Text="注意：缓存包含缩略图、文件名和路径，不会继承原素材逐文件的访问限制。能读取缓存的人可能看到原本无权访问的素材信息。请先确认共享权限；权限不同的团队请关闭此功能。" Style="{StaticResource SettingHint}" Foreground="{DynamicResource WarningBrush}" Margin="0,6,0,0"/>
                                         </StackPanel>
                                         <CheckBox x:Name="TeamCacheCheck" Grid.Column="1" Style="{StaticResource ToggleSwitch}" VerticalAlignment="Center" Margin="24,0,0,0" Checked="TeamCacheCheck_Changed" Unchecked="TeamCacheCheck_Changed"/>
                                     </Grid>
                                     <StackPanel x:Name="TeamCachePanel" Margin="0,14,0,0">
                                         <Grid>
-                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <TextBox x:Name="TeamCacheBox" local:Ui.Placeholder="\\服务器\设计部（会在里面建 .共享速搜缓存）" TextChanged="TeamCacheBox_TextChanged"/>
-                                            <Button Grid.Column="2" Content="浏览…" Click="BrowseTeamCache_Click"/>
-                                            <Button Grid.Column="4" Content="检查" Click="CheckTeamCache_Click"/>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBox x:Name="TeamCacheBox" local:Ui.Placeholder="留空 = 自动在共享盘上找（没有就新建）" TextChanged="TeamCacheBox_TextChanged"/>
+                                            <Button Grid.Column="2" Content="自动找" Click="AutoFindTeamCache_Click" ToolTip="在共享盘上找同事建好的 .共享速搜缓存，没有就给出会新建的位置"/>
+                                            <Button Grid.Column="4" Content="浏览…" Click="BrowseTeamCache_Click"/>
+                                            <Button Grid.Column="6" Content="检查" Click="CheckTeamCache_Click"/>
                                         </Grid>
                                         <StackPanel Orientation="Horizontal" Margin="2,10,0,0">
                                             <Ellipse x:Name="TeamCacheDot" Width="7" Height="7" Fill="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                             <TextBlock x:Name="TeamCacheStatus" Text="还没检查" Style="{StaticResource Caption}" TextWrapping="Wrap"/>
                                         </StackPanel>
                                         <TextBlock x:Name="TeamCacheEstimate" Style="{StaticResource Caption}" Margin="17,4,0,0" TextWrapping="Wrap"/>
+                                        <Border Height="1" Background="{DynamicResource StrokeBrush}" Margin="0,14"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="把我扫好的索引共享给同事" FontSize="13" FontWeight="SemiBold"/>
+                                                <TextBlock Text="你能看的文件夹比同事多（老板、管理员）就关掉：不再发布本机索引，但不会删除已发布的索引，也不会关闭缩略图共享。接收时只预查前两层文件夹，不能替代完整权限隔离。" Style="{StaticResource SettingHint}"/>
+                                            </StackPanel>
+                                            <CheckBox x:Name="PublishIndexCheck" Grid.Column="1" Style="{StaticResource ToggleSwitch}" VerticalAlignment="Center" Margin="24,0,0,0"/>
+                                        </Grid>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
@@ -345,7 +356,7 @@
                                 </Border>
                                 <StackPanel Margin="18,0,0,0" VerticalAlignment="Center">
                                     <TextBlock Text="共享速搜" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="VersionText" Text="版本 1.11.0" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+                                    <TextBlock x:Name="VersionText" Text="版本 1.12.0" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </StackPanel>
                             <TextBlock Text="共享盘素材的本机索引、搜索和预览工具。为按 SKU 找图、找源文件的日常场景而做。" Style="{StaticResource SettingHint}" Margin="0,18,0,20"/>
@@ -394,7 +405,7 @@
                                     </Border>
                                     <StackPanel Grid.Column="1" Margin="14,0,16,0" VerticalAlignment="Center">
                                         <TextBlock Text="只在本机运行" Style="{StaticResource SettingTitle}"/>
-                                        <TextBlock Text="无账号、广告或遥测，不向作者上传素材、文件名、路径或搜索内容。网络用于共享盘访问和更新；开启全组缓存后，只在选定的 .共享速搜缓存 中写入缩略图，不修改原素材。" Style="{StaticResource SettingHint}"/>
+                                        <TextBlock Text="无账号、广告或遥测，不向作者上传素材、文件名、路径或搜索内容。全组缓存默认开启，在共享盘的 .共享速搜缓存 中写入缩略图及索引元数据；不修改原素材。" Style="{StaticResource SettingHint}"/>
                                     </StackPanel>
                                     <Button Grid.Column="2" Content="隐私政策" Click="Privacy_Click"/>
                                 </Grid>

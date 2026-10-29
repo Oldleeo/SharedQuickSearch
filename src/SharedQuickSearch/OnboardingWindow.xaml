@@ -279,7 +279,7 @@
                                         </Grid>
                                         <StackPanel Grid.Column="1">
                                             <TextBlock Text="全组共用一份" Style="{StaticResource FlowItemTitle}"/>
-                                            <TextBlock Style="{StaticResource FlowItemHint}" Text="放在隐藏的 .共享速搜缓存 中。能读取该目录的人可以看到缩略图，不会自动继承原素材的权限；请先确认权限范围。只往这个缓存目录里写，不修改原素材。"/>
+                                            <TextBlock Style="{StaticResource FlowItemHint}" Text="自动寻找或创建 .共享速搜缓存，共用缩略图与索引快照。缓存读者可能看到无权访问的素材名称、路径或图片，且不会自动继承原素材权限；权限范围不一致时请选“只存在这台电脑上”。不修改原素材。"/>
                                             <StackPanel x:Name="CacheTeamPanel" Margin="0,10,0,0" Visibility="Collapsed">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

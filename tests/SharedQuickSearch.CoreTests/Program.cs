@@ -125,9 +125,25 @@ Check("搜索：名字命中排在路径命中前面", index.Search("14-5 psd", 
     var bad = legacyEntries.First(x => !x.IsDirectory);
     bad.Name = "图片／旧.psd";
     File.WriteAllText(legacyPath, System.Text.Json.JsonSerializer.Serialize(legacyEntries));
-    var legacy = new FileIndexService(legacyPath);
+    var migratedPath = Path.Combine(Path.GetTempPath(), $"sqs-migrated-{Guid.NewGuid():N}.json");
+    var legacy = new FileIndexService(migratedPath, legacyPath);
     var legacyCount = await legacy.LoadAsync(new[] { excluded });
     Check("迁移：全角分隔符的旧条目载入时被丢掉", legacyCount == legacyEntries.Count - 1, $"{legacyCount} / {legacyEntries.Count}");
+    Check("迁移：存成新文件、保留旧文件供回退", File.Exists(migratedPath) && File.Exists(legacyPath));
+    // 新格式里文件名本来就带 ／ 的（1.10 以后扫出来的是对的）：再次启动不能被当成旧数据丢掉
+    var modern = System.Text.Json.JsonSerializer.Deserialize<List<FileEntry>>(File.ReadAllText(migratedPath))!;
+    modern.First(x => !x.IsDirectory).Name = "海报／横版.psd";
+    File.WriteAllText(migratedPath, System.Text.Json.JsonSerializer.Serialize(modern));
+    var again = new FileIndexService(migratedPath, legacyPath);
+    Check("迁移：新格式文件不再做全角检查（不会每次启动都重扫）", await again.LoadAsync(new[] { excluded }) == modern.Count);
+    try { File.Delete(migratedPath); } catch { }
+
+    // 共享索引导入：本机没有索引时直接可搜，按自己的排除规则过滤；已经有索引时不覆盖
+    var importExcluded = Path.Combine(keep, "14-5 产品资料");
+    var importer = new FileIndexService(Path.Combine(Path.GetTempPath(), $"sqs-import-{Guid.NewGuid():N}.json"));
+    var imported = await importer.ImportAsync(modern.Select(x => new FileEntry { Name = x.Name, FullPath = x.FullPath, ParentPath = x.ParentPath, Extension = x.Extension, IsDirectory = x.IsDirectory, RootPath = x.RootPath, Size = x.Size }).ToList(), new[] { importExcluded });
+    Check("导入：按自己的排除规则过滤", imported > 0 && imported < modern.Count && !importer.SnapshotEntries().Any(x => PathRules.IsSameOrChild(x.FullPath, importExcluded)), $"{imported} / {modern.Count}");
+    Check("导入：已经有索引时不覆盖", await importer.ImportAsync(modern, Array.Empty<string>()) == 0 && importer.Count == imported);
 
     // 并发：扫描进行中到达的变更不会丢
     var bulk = Path.Combine(root, "bulk");
@@ -231,6 +247,81 @@ try
     if (cold.Any(x => x.Item2 >= 120)) Console.WriteLine($"WARN  有一次搜索超过 120 ms（{timings}），这台机器偏慢或负载高");
 }
 finally { try { File.Delete(bigIndex); } catch { } }
+
+// ================= 全组缓存：路径统一、自动找文件夹、共享索引 =================
+{
+    Check("路径：共享根目录", UncPaths.ShareRoot(@"\\NAS\设计部\产品图\2026") == @"\\NAS\设计部" && UncPaths.ShareRoot(@"C:\设计部") is null);
+    Check("路径：前缀替换按路径段，不区分大小写",
+        UncPaths.Rewrite(@"\\nas\设计部\a.psd", @"\\NAS\设计部", @"Z:\设计部") == @"Z:\设计部\a.psd"
+        && UncPaths.Rewrite(@"\\NAS\设计部", @"\\NAS\设计部", @"Z:\") == @"Z:"
+        && UncPaths.Rewrite(@"\\NAS\设计部2\a.psd", @"\\NAS\设计部", @"Z:\") is null);
+
+    var candidates = TeamCacheLocator.Candidates(new[] { @"\\NAS\设计部\产品图", @"\\NAS\设计部\包装\2026", @"C:\本机素材" });
+    Check("自动找：先看共享根目录，再一层层往下；本机目录不参与",
+        candidates.SequenceEqual(new[] { @"\\NAS\设计部", @"\\NAS\设计部\产品图", @"\\NAS\设计部\包装", @"\\NAS\设计部\包装\2026" }), string.Join(" ; ", candidates));
+
+    var lab = Path.Combine(Path.GetTempPath(), "sqs-team-" + Guid.NewGuid().ToString("N"));
+    var noWrite = Path.Combine(lab, "不存在的共享根");
+    var writable = Path.Combine(lab, "设计部");
+    Directory.CreateDirectory(writable);
+    try
+    {
+        Check("自动找：没有就不建（create=false）", await TeamCacheLocator.FindOrCreateInAsync(new[] { noWrite, writable }, create: false) is null);
+        var created = await TeamCacheLocator.FindOrCreateInAsync(new[] { noWrite, writable }, create: true);
+        Check("自动找：第一个建不了，就建在下一个能建的地方", created == Path.Combine(writable, PathRules.TeamCacheFolderName) && Directory.Exists(created!), created ?? "null");
+        Directory.CreateDirectory(noWrite);
+        Check("自动找：已经有的优先，不会再建一个", await TeamCacheLocator.FindOrCreateInAsync(new[] { noWrite, writable }, create: true) == created
+            && !Directory.Exists(Path.Combine(noWrite, PathRules.TeamCacheFolderName)));
+
+        // 共享索引：A 用 \\NAS\设计部 发布，B 映射成 Z:\设计部 下载
+        var shareA = new[] { new RootMapping(@"\\NAS\设计部", @"\\NAS\设计部") };
+        var shareB = new[] { new RootMapping(@"Z:\设计部", @"\\NAS\设计部") };
+        FileEntry E(string relative, bool dir = false) => new()
+        {
+            Name = relative.Split('\\').Last(), FullPath = @"\\NAS\设计部\" + relative,
+            ParentPath = (@"\\NAS\设计部\" + relative)[..(@"\\NAS\设计部\" + relative).LastIndexOf('\\')],
+            IsDirectory = dir, RootPath = @"\\NAS\设计部", Extension = dir ? "" : Path.GetExtension(relative)
+        };
+        var published = new[] { E("14-5", true), E(@"14-5\主图.psd"), E(@"14-5\白底图.jpg"), E(@".共享速搜缓存\thumbs-v1\ab\x.sqt") };
+        var cacheFolder = created!;
+        Check("共享索引：没人发过时要发", TeamIndexShare.ShouldPublish(cacheFolder, shareA, Array.Empty<string>(), TimeSpan.FromHours(6)));
+        var count = TeamIndexShare.Publish(cacheFolder, published, shareA, Array.Empty<string>(), "1.12.0");
+        Check("共享索引：发布时去掉缓存文件夹里的东西", count == 3, count.ToString());
+        Check("共享索引：6 小时内不重复发布", !TeamIndexShare.ShouldPublish(cacheFolder, shareA, Array.Empty<string>(), TimeSpan.FromHours(6)));
+
+        var fetched = TeamIndexShare.TryFetch(cacheFolder, shareB, Array.Empty<string>());
+        Check("共享索引：映射盘的同事也能用，路径换成他自己的写法",
+            fetched is { } got && got.Entries.Count == 3 && got.Entries.All(x => x.FullPath.StartsWith(@"Z:\设计部\") && x.RootPath == @"Z:\设计部"),
+            fetched is null ? "null" : string.Join(" ; ", fetched.Value.Entries.Select(x => x.FullPath)));
+        Check("共享索引：索引目录不一样的不用", TeamIndexShare.TryFetch(cacheFolder, new[] { new RootMapping(@"\\NAS\产品部", @"\\NAS\产品部") }, Array.Empty<string>()) is null);
+
+        TeamIndexShare.Publish(cacheFolder, published, shareA, new[] { @"\\NAS\设计部\归档" }, "1.12.0");
+        File.Delete(Directory.EnumerateFiles(Path.Combine(cacheFolder, TeamIndexShare.FolderName), "*.meta.json").First(x => !File.ReadAllText(x).Contains("归档")));
+        Check("共享索引：发布者排除了、我没排除的，不用（会少文件）", TeamIndexShare.TryFetch(cacheFolder, shareB, Array.Empty<string>()) is null);
+        Check("共享索引：我排除得更多，可以用", TeamIndexShare.TryFetch(cacheFolder, shareB, new[] { @"\\NAS\设计部\归档", @"\\NAS\设计部\旧版" }) is not null);
+        // 权限：拿来的索引里，前两层我看不到的文件夹整枝去掉
+        var visibleSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"Z:\设计部\14-5", @"Z:\设计部\公共" };
+        var mine = new List<FileEntry>
+        {
+            new() { FullPath = @"Z:\设计部\14-5", IsDirectory = true }, new() { FullPath = @"Z:\设计部\14-5\主图.psd" },
+            new() { FullPath = @"Z:\设计部\财务", IsDirectory = true }, new() { FullPath = @"Z:\设计部\财务\工资表.xlsx" },
+            new() { FullPath = @"Z:\设计部\财务\2026", IsDirectory = true }, new() { FullPath = @"Z:\设计部\财务\2026\奖金.xlsx" },
+            new() { FullPath = @"Z:\设计部\公共", IsDirectory = true }, new() { FullPath = @"Z:\设计部\公共\logo.ai" },
+        };
+        var (seen, hiddenFolders) = TeamIndexShare.FilterVisible(mine, new[] { @"Z:\设计部" }, visibleSet.Contains);
+        Check("共享索引：我看不到的文件夹（含子文件夹和文件）整枝去掉", hiddenFolders >= 1 && seen.Count == 4 && !seen.Any(x => x.FullPath.Contains("财务")),
+            string.Join(" ; ", seen.Select(x => x.FullPath)));
+        var prefixSet = new List<FileEntry>(mine) { new() { FullPath = @"Z:\设计部\财务公开\说明.txt" } };
+        var (prefixVisible, _) = TeamIndexShare.FilterVisible(prefixSet, new[] { @"Z:\设计部" }, visibleSet.Contains);
+        Check("共享索引：权限预查按路径段，不误删相似前缀", prefixVisible.Any(x => x.FullPath.Contains("财务公开")));
+        var (failedVisible, _) = TeamIndexShare.FilterVisible(mine, new[] { @"Z:\设计部" }, _ => throw new UnauthorizedAccessException());
+        Check("共享索引：预查权限异常不放行该目录", failedVisible.Count == 0);
+        Check("共享索引：拒绝点路径越界和控制字符", UncPaths.Rewrite(@"\\NAS\设计部\..\其它\secret.psd", @"\\NAS\设计部", @"Z:\设计部") is null &&
+            UncPaths.Rewrite("\\\\NAS\\设计部\\bad\nname.psd", @"\\NAS\设计部", @"Z:\设计部") is null);
+        Check("共享索引：有一个目录在本机磁盘上就不参与", TeamIndexShare.MapRoots(new[] { @"\\NAS\设计部", @"C:\本机" }, x => x.StartsWith(@"\\") ? x : null) is null);
+    }
+    finally { try { Directory.Delete(lab, true); } catch { } }
+}
 
 // ================= 自动更新：update.json 解析和安装包校验 =================
 {

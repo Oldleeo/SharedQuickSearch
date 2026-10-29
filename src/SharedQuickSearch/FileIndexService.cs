@@ -103,8 +103,14 @@ public sealed class FileIndexService : IDisposable
     private sealed record PrefixCache(Snapshot Snapshot, string TextKey, List<SearchRecord> Matches);
 
     private readonly string _indexPath;
+    // 1.12 之前的索引文件：1.10 以前全角 ／ ＼ 被当成分隔符，旧文件里这类路径是错的，读进来时要迁移
+    private readonly string? _legacyPath;
     // 1.9 之前全角 ／ ＼ 被当成路径分隔符：旧索引里这类文件的路径是错的，下一次校准要完整扫描
     private volatile bool _needsFullScan;
+    /// <summary>载入时迁移了旧索引、去掉了一些条目：要尽快完整扫一遍补回来。</summary>
+    public bool NeedsFullScan => _needsFullScan;
+    /// <summary>最近一次完成的扫描是不是完整扫描（被迁移强制成完整的也算）。</summary>
+    public bool LastRebuildWasFull { get; private set; }
     private readonly SemaphoreSlim _mutate = new(1, 1);
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly HashSet<string> _deferred = new(StringComparer.OrdinalIgnoreCase);
@@ -116,9 +122,10 @@ public sealed class FileIndexService : IDisposable
     private long _version;
     private long _savedVersion;
 
-    public FileIndexService(string? indexPath = null)
+    public FileIndexService(string? indexPath = null, string? legacyPath = null)
     {
-        _indexPath = indexPath ?? Path.Combine(SettingsStore.DataFolder, "file-index-v1.json");
+        _indexPath = indexPath ?? Path.Combine(SettingsStore.DataFolder, "file-index-v2.json");
+        _legacyPath = indexPath is null ? Path.Combine(SettingsStore.DataFolder, "file-index-v1.json") : legacyPath;
         _saveTimer = new Timer(_ => _ = SaveIfDirtyAsync(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
@@ -180,13 +187,17 @@ public sealed class FileIndexService : IDisposable
     {
         try
         {
-            if (!File.Exists(_indexPath)) return 0;
+            // 新格式文件在就只读它；只有旧文件时才做一次迁移。保留旧文件供升级失败回退使用。
+            // （以前每次启动都检查全角斜杠：文件名里本来就有 ／ 的用户会每次启动都重扫一遍）
+            var legacy = !File.Exists(_indexPath) && _legacyPath is not null && File.Exists(_legacyPath);
+            var source = legacy ? _legacyPath! : _indexPath;
+            if (!File.Exists(source)) return 0;
             List<FileEntry> entries;
-            await using (var stream = File.OpenRead(_indexPath))
+            await using (var stream = File.OpenRead(source))
                 entries = await JsonSerializer.DeserializeAsync<List<FileEntry>>(stream) ?? new();
 
             var originalCount = entries.Count;
-            if (entries.Any(x => x.Name.IndexOfAny(FullWidthSeparators) >= 0))
+            if (legacy && entries.Any(x => x.Name.IndexOfAny(FullWidthSeparators) >= 0))
             {
                 entries.RemoveAll(x => x.Name.IndexOfAny(FullWidthSeparators) >= 0);
                 _needsFullScan = true;
@@ -198,7 +209,7 @@ public sealed class FileIndexService : IDisposable
             await _mutate.WaitAsync();
             try { Publish(new Snapshot(records)); }
             finally { _mutate.Release(); }
-            if (records.Count != originalCount) await SaveNowAsync(CancellationToken.None);
+            if (records.Count != originalCount || legacy) await SaveNowAsync(CancellationToken.None);
             return records.Count;
         }
         catch
@@ -206,6 +217,39 @@ public sealed class FileIndexService : IDisposable
             _snapshot = Snapshot.Empty;
             return 0;
         }
+    }
+
+    /// <summary>
+    /// 用同事共享的索引作为起点（只在本机还没有索引时）。按自己的排除规则过滤后直接可以搜，
+    /// 调用方随后做一次快速校准，把共享索引之后的变化补上。返回导入的条数；本机已经有索引时返回 0。
+    /// </summary>
+    public async Task<int> ImportAsync(IReadOnlyList<FileEntry> entries, IReadOnlyCollection<string> exclusions)
+    {
+        var normalizedExclusions = PathRules.NormalizeDistinct(exclusions);
+        var records = await Task.Run(() =>
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var list = new List<SearchRecord>(entries.Count);
+            foreach (var entry in entries)
+            {
+                entry.FullPath = PathRules.Normalize(entry.FullPath);
+                entry.ParentPath = PathRules.Normalize(entry.ParentPath);
+                entry.RootPath = PathRules.Normalize(entry.RootPath);
+                if (entry.FullPath.Length == 0 || !seen.Add(entry.FullPath)) continue;
+                if (PathRules.IsExcluded(entry.FullPath, normalizedExclusions) || IsBuiltInIgnored(entry)) continue;
+                list.Add(new SearchRecord(entry));
+            }
+            return list;
+        }).ConfigureAwait(false);
+        await _mutate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_snapshot.Records.Count > 0 || _rebuilding) return 0; // 已经有了 / 正在扫：不覆盖
+            Publish(new Snapshot(records));
+        }
+        finally { _mutate.Release(); }
+        await SaveNowAsync(CancellationToken.None).ConfigureAwait(false);
+        return records.Count;
     }
 
     /// <summary>退出前调用：把还没落盘的变更写掉。</summary>
@@ -422,6 +466,7 @@ public sealed class FileIndexService : IDisposable
             progress?.Report(new IndexProgress(Count, "索引完成", 100, elapsed, TimeSpan.Zero,
                 elapsed.TotalSeconds <= 0 ? 0 : Count / elapsed.TotalSeconds));
             if (failedPaths.Count == 0) _needsFullScan = false;
+            LastRebuildWasFull = !quick;
             return new IndexBuildResult(Count, skipped, errors, DateTime.UtcNow - started, reused);
         }
         finally

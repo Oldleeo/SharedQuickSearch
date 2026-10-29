@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private bool _videoSliderUpdating;
     private bool _uiReady;
     private bool _silentRebuild;
+    private bool _silentFullRebuild;
     private DateTime _lastOverflowReconcile = DateTime.MinValue;
 
     public AppSettings SettingsData { get; private set; }
@@ -78,7 +79,8 @@ public partial class MainWindow : Window
         }
 
         _thumbnailService = new ThumbnailService(SettingsData.ThumbnailCacheLimitMb, SettingsData.ThumbnailCacheFolder) { PrefetchEnabled = SettingsData.ThumbnailPrefetch };
-        _thumbnailService.SetTeamFolder(SettingsData.TeamCacheFolder);
+        // 全组缓存：先用上次的位置（关掉了就不用），启动后再在后台确认 / 自动找
+        _thumbnailService.SetTeamFolder(TeamCacheModes.Normalize(SettingsData.TeamCacheMode) == TeamCacheModes.Off ? null : SettingsData.TeamCacheFolder);
 
         Folders = new FolderPreviewService(_index, _thumbnailService);
         _thumbnailService.Refined += (entry, image) => Dispatcher.InvokeAsync(() =>
@@ -202,6 +204,143 @@ public partial class MainWindow : Window
         await RefreshRootStateAsync();
         StartRealtimeMonitoring();
         StartThumbnailPrefetch();
+        _teamConfigTask = ConfigureTeamCacheAsync(rediscover: false);
+        // 1.10 以前的旧索引迁移时去掉了一些条目：马上在后台完整扫一遍补回来，不等 2 小时后的定时校准
+        if (_index.NeedsFullScan && count > 0) MarkFullScanOwed();
+        // 还欠一次完整扫描（上次用了共享索引或迁移了旧索引，扫到一半被关掉 / 被更新重启）：接着做
+        if (SettingsData.FullScanOwed && count > 0 && SettingsData.IndexRoots.Count > 0) _ = RebuildIndexAsync(silent: true, full: true);
+        // 设置好了但还没有索引（上次没扫完、或者刚从旧版本升级上来换了索引文件）：先拿同事的，没有再自己扫
+        if (count == 0 && SettingsData.IndexRoots.Count > 0 && SettingsData.OnboardingDone) _ = StartFirstIndexAsync();
+    }
+
+    // ================= 全组缓存：自动找、共享索引 =================
+
+    private int _teamConfigure;
+    private Task? _teamConfigTask;
+
+    /// <summary>
+    /// 按设置开全组缓存。Auto：用上次找到的；没有、或者那里没权限，就在共享盘上自动找（找不到就建一个）。
+    /// rediscover：索引目录变了，重新找。全部在后台，共享盘离线也不会卡。
+    /// </summary>
+    private async Task ConfigureTeamCacheAsync(bool rediscover)
+    {
+        var mode = TeamCacheModes.Normalize(SettingsData.TeamCacheMode);
+        if (mode == TeamCacheModes.Off) { _thumbnailService.SetTeamFolder(null); return; }
+        if (mode == TeamCacheModes.Manual || (!rediscover && SettingsData.TeamCacheFolder.Length > 0))
+        {
+            _thumbnailService.SetTeamFolder(SettingsData.TeamCacheFolder);
+            if (mode == TeamCacheModes.Manual || SettingsData.TeamCacheFolder.Length == 0) return;
+            // Auto 模式下上次找到的那个现在没权限了：重新找
+            if (await WaitTeamStateAsync() != TeamCacheState.NoPermission) return;
+        }
+        if (Interlocked.Exchange(ref _teamConfigure, 1) == 1) return;
+        try
+        {
+            // 上次的那个没权限了：找的时候跳过它，不然又会找回它
+            var skip = _thumbnailService.Team is { State: TeamCacheState.NoPermission } failed ? failed.Folder : null;
+            var found = await TeamCacheLocator.FindOrCreateAsync(SettingsData.IndexRoots.ToArray(), create: true, skip);
+            if (found is null) return; // 共享盘离线或者都没权限：保持原样，下次启动再找
+            var folder = TeamThumbnailCache.NormalizeFolder(found);
+            if (!string.Equals(folder, SettingsData.TeamCacheFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                SettingsData.TeamCacheFolder = folder;
+                try { SettingsStore.Save(SettingsData); } catch { }
+            }
+            _thumbnailService.SetTeamFolder(folder);
+        }
+        finally { Volatile.Write(ref _teamConfigure, 0); }
+    }
+
+    /// <summary>等全组缓存的检查结果（最多 10 秒）。</summary>
+    private async Task<TeamCacheState> WaitTeamStateAsync()
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            if (_thumbnailService.Team is not { } team) return TeamCacheState.Off;
+            if (team.State != TeamCacheState.Checking) return team.State;
+            await Task.Delay(200);
+        }
+        return TeamCacheState.Checking;
+    }
+
+    /// <summary>本机还没有索引：先用同事放在全组缓存里的那份（几秒），后台快速核对；没有就自己完整扫一遍。</summary>
+    private async Task StartFirstIndexAsync()
+    {
+        while (_indexCancellation is not null) await Task.Delay(200);
+        // 全组缓存可能还在找（引导刚保存、共享盘慢）：最多等 15 秒，等不到就自己扫
+        if (_teamConfigTask is { } configuring) await Task.WhenAny(configuring, Task.Delay(TimeSpan.FromSeconds(15)));
+        if (_index.Count == 0 && await TryImportSharedIndexAsync())
+        {
+            // 已经能搜了；后台再完整扫一遍，把共享索引之后原地改过的文件、自己没权限的文件夹都对一遍
+            MarkFullScanOwed();
+            await RebuildIndexAsync(silent: true, full: true);
+            return;
+        }
+        await RebuildIndexAsync();
+    }
+
+    private (IReadOnlyList<RootMapping> Roots, List<string> Exclusions)? SharedIndexScope()
+    {
+        var roots = TeamIndexShare.MapRoots(SettingsData.IndexRoots, root => UncPaths.ToUnc(PathRules.Normalize(root)));
+        if (roots is null) return null;
+        var exclusions = SettingsData.ExcludedPaths.Select(x => UncPaths.ToUnc(PathRules.Normalize(x))).Where(x => x is not null).Select(x => x!).ToList();
+        return (roots, exclusions);
+    }
+
+    private async Task<bool> TryImportSharedIndexAsync()
+    {
+        if (await WaitTeamStateAsync() is not (TeamCacheState.ReadWrite or TeamCacheState.ReadOnly)) return false;
+        if (_thumbnailService.Team is not { } team || SharedIndexScope() is not { } scope) return false;
+        SetStatus("正在拿同事扫好的索引…", busy: true);
+        try
+        {
+            var fetch = Task.Run(() => TeamIndexShare.TryFetch(team.Folder, scope.Roots, scope.Exclusions));
+            // 十几 MB，正常几秒；网络很慢就算了，自己扫
+            if (await Task.WhenAny(fetch, Task.Delay(TimeSpan.FromSeconds(90))) != fetch || await fetch is not { } shared) return false;
+            // 发布的人权限可能比我大：先把前两层里我看不到的文件夹整枝去掉，再让它能搜
+            SetStatus("正在核对文件夹权限…", busy: true);
+            var roots = SettingsData.IndexRoots.ToArray();
+            var filter = Task.Run(() => TeamIndexShare.FilterVisible(shared.Entries, roots, path => { try { return Directory.Exists(path); } catch { return false; } }));
+            if (await Task.WhenAny(filter, Task.Delay(TimeSpan.FromSeconds(60))) != filter) return false; // 共享盘太慢：自己扫
+            var (visible, _) = await filter;
+            var count = await _index.ImportAsync(visible, SettingsData.ExcludedPaths);
+            if (count == 0) return false;
+            UpdateIndexSummary(_index.Count);
+            await RefreshResultsAsync();
+            if (_spotlight is not null) await _spotlight.RefreshAsync();
+            _spotlight?.ResolvePendingTray(dropMissing: false);
+            var age = DateTime.UtcNow - shared.Meta.CreatedUtc;
+            SetStatus($"已用同事扫好的索引（{count:N0} 个文件，{FormatAge(age)}），正在后台核对");
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static string FormatAge(TimeSpan age) => age.TotalMinutes < 60 ? $"{Math.Max(1, (int)age.TotalMinutes)} 分钟前" : age.TotalHours < 48 ? $"{(int)age.TotalHours} 小时前" : $"{(int)age.TotalDays} 天前";
+
+    /// <summary>一次没有出错的扫描之后：把索引放进全组缓存给新同事用（6 小时内有人发过就不发）。</summary>
+    private void MarkFullScanOwed()
+    {
+        if (SettingsData.FullScanOwed) return;
+        SettingsData.FullScanOwed = true;
+        try { SettingsStore.Save(SettingsData); } catch { } // 马上存：接下来的扫描随时可能被打断
+    }
+
+    private void PublishSharedIndexLater()
+    {
+        // 这台电脑设成“不共享我的索引”（权限比别人大）：只用别人的，不发布
+        if (!SettingsData.PublishSharedIndex) return;
+        if (_thumbnailService.Team is not { CanWrite: true } team || _offlineRoots > 0 || SharedIndexScope() is not { } scope) return;
+        var entries = _index.SnapshotEntries();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (TeamIndexShare.ShouldPublish(team.Folder, scope.Roots, scope.Exclusions, TimeSpan.FromHours(6)))
+                    TeamIndexShare.Publish(team.Folder, entries, scope.Roots, scope.Exclusions, UpdateService.CurrentVersion);
+            }
+            catch { }
+        });
     }
 
     // ================= 缩略图后台预热 =================
@@ -285,7 +424,8 @@ public partial class MainWindow : Window
             .Any(x => x.IsVisible && !ReferenceEquals(x, this) && !ReferenceEquals(x, _spotlight));
         if (otherWindows) return false;
         if (IdleTime() >= TimeSpan.FromMinutes(10)) return true;
-        return !IsVisible && _spotlight is not { IsVisible: true } && (!IsIndexing || _silentRebuild);
+        // 后台的完整扫描（核对共享索引）不打断：重启后虽然会接着做，但要从头扫
+        return !IsVisible && _spotlight is not { IsVisible: true } && (!IsIndexing || (_silentRebuild && !_silentFullRebuild));
     }
 
     private void ApplyUpdate(UpdateManifest manifest, string path)
@@ -298,10 +438,12 @@ public partial class MainWindow : Window
     /// <summary>刚被自动更新换上来：托盘提示一下。</summary>
     public void NotifyUpdated(string fromVersion)
     {
-        // 从 1.11 之前升上来：说一下新增的、需要自己打开的功能
+        // 从旧版本升上来：说一下这次新增的
         var news = UpdateRules.Compare(fromVersion, "1.11.0") < 0
-            ? "新增：双击 Ctrl 呼出、全组共用缩略图缓存，都在设置里打开。收集栏现在退出后也会保留。"
-            : $"按 {SettingsData.GlobalHotkey} 呼出。设置 → 关于 里可以看到更新状态。";
+            ? "新增：全组共用缓存（自动找共享盘上的 .共享速搜缓存）、双击 Ctrl 呼出（设置里打开）。收集栏现在退出后也会保留。"
+            : UpdateRules.Compare(fromVersion, "1.12.0") < 0
+                ? "全组共用缓存现在默认开着，会自动在共享盘上找；扫好的索引也会共享，新同事装好几秒就能搜。"
+                : $"按 {SettingsData.GlobalHotkey} 呼出。设置 → 关于 里可以看到更新状态。";
         Dispatcher.InvokeAsync(() =>
         {
             try { _trayIcon?.ShowBalloonTip(6000, $"共享速搜已更新到 {UpdateService.CurrentVersion}", news, Forms.ToolTipIcon.None); }
@@ -321,10 +463,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>设置里改了本机缓存位置或全组缓存：马上生效。</summary>
-    private void ApplyCacheLocations()
+    private void ApplyCacheLocations(bool rediscoverTeam = false)
     {
         if (_thumbnailService.MoveLocalCache(SettingsData.ThumbnailCacheFolder)) StartThumbnailPrefetch();
-        _thumbnailService.SetTeamFolder(SettingsData.TeamCacheFolder);
+        _ = ConfigureTeamCacheAsync(rediscoverTeam);
     }
 
     /// <summary>索引里能出缩略图的文件数（估算全组缓存大小用）。</summary>
@@ -1096,7 +1238,9 @@ public partial class MainWindow : Window
 
     private async void RebuildButton_Click(object sender, RoutedEventArgs e) => await RebuildIndexAsync();
 
-    private async Task RebuildIndexAsync(bool silent = false)
+    /// <param name="silent">后台进行，不弹进度。</param>
+    /// <param name="full">后台也做完整扫描（不沿用“目录没变”的内容）。用同事的共享索引起步后要这样核对一次。</param>
+    private async Task RebuildIndexAsync(bool silent = false, bool full = false)
     {
         if (SettingsData.IndexRoots.Count == 0)
         {
@@ -1111,6 +1255,7 @@ public partial class MainWindow : Window
 
         _indexCancellation = new CancellationTokenSource();
         _silentRebuild = silent;
+        _silentFullRebuild = silent && full;
         if (!silent)
         {
             RebuildText.Text = "停止";
@@ -1137,7 +1282,8 @@ public partial class MainWindow : Window
         try
         {
             // 后台校准用快速模式（目录修改时间没变就沿用上次的内容），手动刷新做完整扫描
-            var result = await _index.RebuildAsync(SettingsData.IndexRoots, SettingsData.ExcludedPaths, progress, _indexCancellation.Token, quick: silent);
+            var quick = silent && !full;
+            var result = await _index.RebuildAsync(SettingsData.IndexRoots, SettingsData.ExcludedPaths, progress, _indexCancellation.Token, quick: quick);
             UpdateIndexSummary(result.EntryCount);
             await RefreshResultsAsync(preserve: true);
             if (_spotlight is not null) await _spotlight.RefreshAsync();
@@ -1145,6 +1291,12 @@ public partial class MainWindow : Window
             _spotlight?.ResolvePendingTray(dropMissing: result.Errors.Count == 0);
             if (result.Errors.Count == 0)
             {
+                // 只发布完整扫描的结果：快速校准会沿用“目录没变”的内容，原地改过的文件、没权限的文件夹它看不出来
+                if (_index.LastRebuildWasFull)
+                {
+                    if (SettingsData.FullScanOwed) { SettingsData.FullScanOwed = false; SaveSettingsSoon(); }
+                    PublishSharedIndexLater();
+                }
                 SetStatus($"索引完成：{result.EntryCount:N0} 项，用时 {FormatDuration(result.Elapsed)}");
                 if (!silent) ShowToast($"索引完成 · {result.EntryCount:N0} 项");
             }
@@ -1331,7 +1483,8 @@ public partial class MainWindow : Window
         _thumbnailService.CacheLimitMegabytes = SettingsData.ThumbnailCacheLimitMb;
         RegisterGlobalHotkey(showFailure: true);
         ApplyDoubleCtrl(showFailure: true);
-        ApplyCacheLocations();
+        // 自动模式下索引目录变了：重新找全组缓存（新的目录可能在别的共享盘上）
+        ApplyCacheLocations(rediscoverTeam: !oldRoots.SequenceEqual(SettingsData.IndexRoots, StringComparer.OrdinalIgnoreCase));
         UpdateHotkeyHint();
         var removed = await _index.ApplyExclusionsAsync(SettingsData.ExcludedPaths);
         UpdateIndexSummary(_index.Count);
@@ -1499,12 +1652,17 @@ public partial class MainWindow : Window
         if (!autoStart) StartupManager.SetEnabled(false);
         SettingsData.DoubleCtrlSummon = choices.DoubleCtrl;
         SettingsData.ThumbnailCacheFolder = choices.LocalCacheFolder;
+        SettingsData.TeamCacheMode = choices.TeamCacheMode;
+        if (InstallPreset.Find() is { PublishSharedIndex: { } publish }) SettingsData.PublishSharedIndex = publish;
         SettingsData.TeamCacheFolder = choices.TeamCacheFolder;
         if (!string.IsNullOrWhiteSpace(choices.UpdateFeed) && string.IsNullOrWhiteSpace(SettingsData.UpdateFeed)) SettingsData.UpdateFeed = choices.UpdateFeed!.Trim();
         SettingsData.OnboardingDone = true;
         try { SettingsStore.Save(SettingsData); } catch { }
         ApplyDoubleCtrl(showFailure: true);
-        ApplyCacheLocations();
+        if (_thumbnailService.MoveLocalCache(SettingsData.ThumbnailCacheFolder)) StartThumbnailPrefetch();
+        // 先把全组缓存找好（共享索引要用），再开始第一次索引
+        // 不在这里等：共享盘慢的时候找缓存可能要几十秒；第一次索引开始前最多等 15 秒
+        _teamConfigTask = ConfigureTeamCacheAsync(rediscover: choices.TeamCacheMode == TeamCacheModes.Auto && choices.TeamCacheFolder.Length == 0);
         await _index.ApplyExclusionsAsync(SettingsData.ExcludedPaths);
         UpdateIndexSummary(_index.Count);
         _ = RebuildWhenIdleAsync();
@@ -1514,7 +1672,8 @@ public partial class MainWindow : Window
     private async Task RebuildWhenIdleAsync()
     {
         while (_indexCancellation is not null) await Task.Delay(200);
-        await RebuildIndexAsync();
+        if (_index.Count == 0) await StartFirstIndexAsync();
+        else await RebuildIndexAsync();
     }
 
     public void ExitApp() => ExitApplication();

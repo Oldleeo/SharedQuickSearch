@@ -16,8 +16,12 @@ public sealed class InstallPreset
 
     public List<string> IndexRoots { get; set; } = new();
     public List<string> ExcludedPaths { get; set; } = new();
-    /// <summary>全组共用缓存的位置（共享盘上）；写了就默认选“全组共用”。</summary>
+    /// <summary>全组共用缓存的位置（共享盘上）。不写就自动找（找不到就建）。</summary>
     public string? TeamCacheFolder { get; set; }
+    /// <summary>"off" = 不用全组缓存；不写 = 默认开（自动找）。</summary>
+    public string? TeamCacheMode { get; set; }
+    /// <summary>false = 这台电脑只用同事的索引，不发布自己的（给权限大的人用的安装包）。</summary>
+    public bool? PublishSharedIndex { get; set; }
     /// <summary>本机缓存的位置；不写就是默认位置。</summary>
     public string? ThumbnailCacheFolder { get; set; }
     /// <summary>自建的更新源（https 地址或共享盘上的 update.json）。</summary>
