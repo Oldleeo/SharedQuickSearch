@@ -49,7 +49,7 @@ public sealed record DriveSuggestion(string Label, string Path);
 /// <summary>首次引导里选好的东西，一次交给后台宿主保存。</summary>
 public sealed record OnboardingChoices(
     IReadOnlyList<string> Roots, IReadOnlyList<string> Exclusions, bool AutoStart, bool ClipboardPrefill, bool SpotlightLaunch,
-    bool DoubleCtrl, string LocalCacheFolder, string TeamCacheFolder, string? UpdateFeed);
+    bool DoubleCtrl, string LocalCacheFolder, string TeamCacheMode, string TeamCacheFolder, string? UpdateFeed);
 
 /// <summary>
 /// 首次引导 + 使用教学。
@@ -75,6 +75,8 @@ public partial class OnboardingWindow : Window
     private readonly List<(IAnimatable Target, DependencyProperty Property)> _demos = new();
     private readonly string _hotkey;
     private bool _teamCache;
+    private bool _teamManual;      // 用户自己改过位置（不再自动找）
+    private bool _settingTeamBox;  // 程序在填框，不算用户改
     private string _localCacheChoice = "";
     private TeamCacheState? _teamProbe;
 
@@ -99,8 +101,11 @@ public partial class OnboardingWindow : Window
         ClipboardCheck.IsChecked = settings.ClipboardPrefill;
         DoubleCtrlCheck.IsChecked = settings.DoubleCtrlSummon;
         _localCacheChoice = settings.ThumbnailCacheFolder;
-        _teamCache = settings.TeamCacheFolder.Length > 0;
-        TeamCacheBox.Text = settings.TeamCacheFolder;
+        // 公司里用：默认全组共用，自动在共享盘上找 .共享速搜缓存
+        var teamMode = TeamCacheModes.Normalize(settings.TeamCacheMode);
+        _teamCache = teamMode != TeamCacheModes.Off;
+        _teamManual = teamMode == TeamCacheModes.Manual;
+        SetTeamBox(settings.TeamCacheFolder);
 
         // 安装包旁边放了预设文件，而且还没设置过：按预设填好，用户照样可以改
         if (!tutorialOnly && settings.IndexRoots.Count == 0 && InstallPreset.Find() is { } preset)
@@ -112,10 +117,12 @@ public partial class OnboardingWindow : Window
             if (preset.ClipboardPrefill is { } clipboard) ClipboardCheck.IsChecked = clipboard;
             if (preset.DoubleCtrlSummon is { } doubleCtrl) DoubleCtrlCheck.IsChecked = doubleCtrl;
             if (!string.IsNullOrWhiteSpace(preset.ThumbnailCacheFolder) && Setup.InstallerEngine.IsLocalPath(preset.ThumbnailCacheFolder!)) _localCacheChoice = preset.ThumbnailCacheFolder!;
-            if (!string.IsNullOrWhiteSpace(preset.TeamCacheFolder))
+            if (string.Equals(preset.TeamCacheMode, TeamCacheModes.Off, StringComparison.OrdinalIgnoreCase)) _teamCache = false;
+            else if (!string.IsNullOrWhiteSpace(preset.TeamCacheFolder))
             {
                 _teamCache = true;
-                TeamCacheBox.Text = TeamThumbnailCache.NormalizeFolder(preset.TeamCacheFolder!);
+                _teamManual = true;
+                SetTeamBox(TeamThumbnailCache.NormalizeFolder(preset.TeamCacheFolder!));
             }
         }
         ShowCacheChoice();
@@ -212,6 +219,7 @@ public partial class OnboardingWindow : Window
         UpdateChrome();
         if (_inTutorial) StartDemo(_flow[index]);
         if (ReferenceEquals(_flow[index], PageRoots)) Dispatcher.InvokeAsync(() => RootInput.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+        if (ReferenceEquals(_flow[index], PageCache)) _ = PrepareCachePageAsync();
     }
 
     private void EnterTutorial()
@@ -544,9 +552,8 @@ public partial class OnboardingWindow : Window
     {
         _teamCache = team;
         // 第一次选全组共用：按第一个共享盘目录给个建议位置
-        if (team && TeamCacheBox.Text.Trim().Length == 0 && TeamThumbnailCache.SuggestFor(_roots.Select(x => x.Path)) is { } suggestion)
-            TeamCacheBox.Text = suggestion;
         ShowCacheChoice();
+        if (team && TeamCacheBox.Text.Trim().Length == 0) _ = PrepareCachePageAsync();
         if (team) Ui.FadeIn(CacheTeamPanel, offsetY: 6, milliseconds: 220);
     }
 
@@ -577,8 +584,43 @@ public partial class OnboardingWindow : Window
 
     private void TeamCacheBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        if (_settingTeamBox) return;
+        _teamManual = true;
         _teamProbe = null;
         SetTeamStatus("还没检查", "TextTertiaryBrush");
+    }
+
+    private void SetTeamBox(string text)
+    {
+        _settingTeamBox = true;
+        try { TeamCacheBox.Text = text; }
+        finally { _settingTeamBox = false; }
+    }
+
+    /// <summary>进到这一页：自动在共享盘上找同事建好的 .共享速搜缓存；没有就给出会新建的位置。</summary>
+    private async Task PrepareCachePageAsync()
+    {
+        if (!_teamCache || _teamManual || TeamCacheBox.Text.Trim().Length > 0) return;
+        var roots = _roots.Select(x => x.Path).ToList();
+        if (TeamCacheLocator.Candidates(roots).Count == 0)
+        {
+            // 索引目录都在本机：没有共享盘可以放全组缓存
+            SelectCache(team: false);
+            return;
+        }
+        SetTeamStatus("正在共享盘上找 .共享速搜缓存…", "AccentBrush");
+        var found = await TeamCacheLocator.FindOrCreateAsync(roots, create: false);
+        if (_teamManual) return; // 找的时候用户自己填了
+        if (found is not null)
+        {
+            SetTeamBox(found);
+            SetTeamStatus("找到了：同事已经在用这个，直接共用", "SuccessBrush");
+        }
+        else if (TeamThumbnailCache.SuggestFor(roots) is { } suggestion)
+        {
+            SetTeamBox(suggestion);
+            SetTeamStatus("还没有人建过，点“下一步”时在这里新建", "TextTertiaryBrush");
+        }
     }
 
     private async void CheckTeamCache_Click(object sender, RoutedEventArgs e) => await ProbeTeamCacheAsync();
@@ -591,9 +633,7 @@ public partial class OnboardingWindow : Window
         SetTeamStatus("正在检查…", "AccentBrush");
         var probe = new TeamThumbnailCache(path);
         var state = await probe.ProbeAsync();
-        TeamCacheBox.TextChanged -= TeamCacheBox_TextChanged;
-        TeamCacheBox.Text = probe.Folder;
-        TeamCacheBox.TextChanged += TeamCacheBox_TextChanged;
+        SetTeamBox(probe.Folder);
         _teamProbe = state;
         SetTeamStatus(probe.Describe(), state switch { TeamCacheState.ReadWrite => "SuccessBrush", TeamCacheState.ReadOnly => "AccentBrush", _ => "WarningBrush" });
         return state;
@@ -603,6 +643,8 @@ public partial class OnboardingWindow : Window
     private async Task<bool> ValidateCacheAsync()
     {
         if (!_teamCache) return true;
+        // 自动模式还没找到位置（共享盘没连上）：先继续，软件运行后会自己再找
+        if (!_teamManual && TeamCacheBox.Text.Trim().Length == 0) return true;
         _busy = true;
         try
         {
@@ -653,7 +695,8 @@ public partial class OnboardingWindow : Window
                 SpotlightCheck.IsChecked == true,
                 DoubleCtrlCheck.IsChecked == true,
                 _localCacheChoice,
-                _teamCache ? TeamThumbnailCache.NormalizeFolder(TeamCacheBox.Text.Trim()) : "",
+                !_teamCache ? TeamCacheModes.Off : _teamManual ? TeamCacheModes.Manual : TeamCacheModes.Auto,
+                _teamCache && TeamCacheBox.Text.Trim().Length > 0 ? TeamThumbnailCache.NormalizeFolder(TeamCacheBox.Text.Trim()) : "",
                 _preset?.UpdateFeed));
             _applied = true;
             return true;

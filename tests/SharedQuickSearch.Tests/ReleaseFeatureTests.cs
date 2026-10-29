@@ -12,7 +12,7 @@ internal static class ReleaseFeatureTests
         try
         {
             var settings = new AppSettings();
-            check("新增功能默认不启用共享写入或键盘钩子", settings.TeamCacheFolder == "" && !settings.DoubleCtrlSummon);
+            check("v1.12 默认自动共享，双击 Ctrl 仍默认关闭", settings.TeamCacheMode == TeamCacheModes.Auto && settings.TeamCacheFolder == "" && !settings.DoubleCtrlSummon);
             check("新增设置克隆保留", new AppSettings { TeamCacheFolder = "team", ThumbnailCacheFolder = "local", DoubleCtrlSummon = true }.Clone() is { TeamCacheFolder: "team", ThumbnailCacheFolder: "local", DoubleCtrlSummon: true });
             check("共享缓存不重复嵌套固定目录", TeamThumbnailCache.NormalizeFolder(TeamThumbnailCache.NormalizeFolder(root)) == TeamThumbnailCache.NormalizeFolder(root));
             check("本机文件不上传全组缓存", TeamThumbnailCache.KeyFor(new FileEntry { FullPath = Path.Combine(root, "private.psd") }) is null);

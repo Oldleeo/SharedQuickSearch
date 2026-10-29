@@ -35,7 +35,7 @@
 
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="隐私结论" Style="{StaticResource PolicyTitle}"/>
-                    <TextBlock Style="{StaticResource PolicyBody}" Text="共享速搜在本机运行，没有云端账号、广告、统计 SDK 或遥测，不向作者上传素材、文件名、路径、搜索内容或共享盘凭据。可选的全组缓存会向你指定的共享目录写入缩略图。"/>
+                    <TextBlock Style="{StaticResource PolicyBody}" Text="共享速搜在本机运行，没有云端账号、广告、统计 SDK 或遥测，不向作者上传素材、文件名、路径、搜索内容或共享盘凭据。全组缓存默认开启，会在共享盘寻找或创建缓存目录，写入缩略图及文件名、路径等索引元数据。"/>
                 </StackPanel></Border>
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="本地处理的数据" Style="{StaticResource PolicyTitle}"/>
@@ -55,7 +55,7 @@
                 </StackPanel></Border>
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="全组缓存与收集栏" Style="{StaticResource PolicyTitle}"/>
-                    <TextBlock Style="{StaticResource PolicyBody}" Text="全组缓存默认关闭。启用后，仅在指定位置的 .共享速搜缓存 里写缩略图；缓存读者可能看到这些图片，缓存不会自动继承每份原素材的访问限制，请先配置权限。收集栏路径保存在本机 %AppData%\Oldlee\共享速搜\tray.json，用于重启与更新后恢复。"/>
+                    <TextBlock Style="{StaticResource PolicyBody}" Text="全组缓存默认开启，可在设置中关闭。能读取 .共享速搜缓存 的人可能看到缩略图、文件名和路径；缓存不会继承逐文件访问限制。接收索引仅预查前两层文件夹，不是权限隔离。关闭索引发布不会删除已有快照，也不关闭缩略图共享。权限不同的环境请先关闭全组缓存或配置缓存权限。收集栏路径保存在本机 %AppData%\Oldlee\共享速搜\tray.json，用于重启与更新后恢复。"/>
                 </StackPanel></Border>
                 <Border Style="{StaticResource PolicyCard}"><StackPanel>
                     <TextBlock Text="全局快捷键与开机启动" Style="{StaticResource PolicyTitle}"/>
