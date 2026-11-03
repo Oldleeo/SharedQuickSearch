@@ -145,6 +145,8 @@ public sealed class ThumbnailService : IDisposable
     {
         _disk = new ThumbnailDiskCache(ResolveLocalFolder(localFolder), Math.Max(256, cacheLimitMegabytes) * 1024L * 1024);
         _ = Task.Run(_disk.Trim);
+        // 自带的 ffmpeg 先在后台解压、核对好，第一次看视频时不用等
+        _ = Task.Run(() => VideoFrameExtractor.IsAvailable);
         // 全组缓存连不上 / 没权限时，每 5 分钟再看一次
         _teamProbe = new Timer(_ =>
         {
@@ -211,6 +213,15 @@ public sealed class ThumbnailService : IDisposable
         return image;
     }
 
+    /// <summary>空格预览、工作台详情用的大一点的视频画面（自带 ffmpeg 取帧）。没有 ffmpeg 或取不到返回 null。</summary>
+    public async Task<BitmapSource?> LoadVideoPreviewAsync(string path, int maxEdge, CancellationToken cancellationToken)
+    {
+        if (!VideoFrameExtractor.MayBeAvailable) return null;
+        using var scope = ForegroundScope();
+        var bmp = await VideoFrameExtractor.ExtractAsync(path, maxEdge, background: false, cancellationToken).ConfigureAwait(false);
+        return bmp is null ? null : ImageCodec.Decode(bmp, 0, bmp.Length);
+    }
+
     /// <summary>预览窗格用的大图 Shell 缩略图（PSD / AI / PDF / Office / 文件夹）。</summary>
     public async Task<BitmapSource?> LoadShellPreviewAsync(string path, int size, CancellationToken cancellationToken)
     {
@@ -232,6 +243,8 @@ public sealed class ThumbnailService : IDisposable
     {
         var path = entry.FullPath;
         var extension = entry.Extension;
+        // 视频交给自带的 ffmpeg：以前 Windows 留下的“生成不出来”标记不算数，也不先去问 Windows 的缓存
+        var ffmpegVideo = VideoFrameExtractor.Supports(extension) && VideoFrameExtractor.MayBeAvailable;
 
         // ② 本机磁盘缓存（含失败标记）
         if (readDisk)
@@ -242,7 +255,7 @@ public sealed class ThumbnailService : IDisposable
                 if (count) Interlocked.Increment(ref _hitDisk);
                 return (disk.LowQuality && !CanRefine(entry) ? disk with { LowQuality = false } : disk, false);
             }
-            if (await RunIoAsync(() => _disk.IsNegative(key) ? "" : null, cancellationToken).ConfigureAwait(false) is not null) return (null, true);
+            if (!ffmpegVideo && await RunIoAsync(() => _disk.IsNegative(key) ? "" : null, cancellationToken).ConfigureAwait(false) is not null) return (null, true);
         }
         if (diskOnly) return (null, false);
 
@@ -259,6 +272,23 @@ public sealed class ThumbnailService : IDisposable
                 if (count) Interlocked.Increment(ref _hitTeam);
                 return (shared.LowQuality && !CanRefine(entry) ? shared with { LowQuality = false } : shared, false);
             }
+        }
+
+        // ④½ 视频：自带的 ffmpeg 取第一帧（黑场再取 1.5 秒处），通常只读 1 MB 以内，不管文件多大。
+        // 放在问 Windows 缓存之前：那一步对共享盘上的视频也要好几百毫秒，而且只有 2 个线程，和所有图片共用
+        if (ffmpegVideo)
+        {
+            var background = ReferenceEquals(sta, _background);
+            var bmp = await VideoFrameExtractor.ExtractAsync(path, ThumbnailSize, background, cancellationToken).ConfigureAwait(false);
+            var frame = bmp is null ? null : ImageCodec.Decode(bmp, 0, bmp.Length);
+            if (frame is not null)
+            {
+                var result = new ThumbResult(frame, 0, 0, false);
+                WriteLater(entry, key, result, share);
+                if (count) Interlocked.Increment(ref _generated);
+                return (result, false);
+            }
+            // 取不到（文件坏了、格式太少见、ffmpeg 被拦了）：下面照旧交给 Windows 试一次
         }
 
         // ③ Windows 缩略图缓存（资源管理器看过的文件）—— 单独的线程池，不排在慢生成后面
@@ -410,7 +440,9 @@ public sealed class ThumbnailService : IDisposable
 
     public static bool IsPrefetchable(FileEntry entry) =>
         !entry.IsDirectory && (FileTypes.Images.Contains(entry.Extension)
-            || entry.Extension.ToLowerInvariant() is ".psd" or ".psb" or ".ai" or ".eps" or ".pdf" or ".indd");
+            || entry.Extension.ToLowerInvariant() is ".psd" or ".psb" or ".ai" or ".eps" or ".pdf" or ".indd"
+            // 视频：有自带 ffmpeg 时也预热，只读开头不到 1 MB；没有就不预热（Windows 生成要读很多）
+            || (VideoFrameExtractor.Supports(entry.Extension) && VideoFrameExtractor.MayBeAvailable));
 
     /// <summary>
     /// 开始预热。索引内容没变时直接跳过（上一轮在跑或已跑完），

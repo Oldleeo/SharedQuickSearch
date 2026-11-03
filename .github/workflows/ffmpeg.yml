@@ -1,0 +1,27 @@
+# 手动运行：用 third_party/ffmpeg/build-ffmpeg.sh 从 FFmpeg 官方源码重新编一份精简版 ffmpeg.exe，
+# 作为构建产物下载。想升级 ffmpeg 版本或核对仓库里的那份时用；平时的构建直接用仓库里的 ffmpeg.exe.gz。
+name: build ffmpeg
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ffmpeg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y git make nasm mingw-w64
+      - name: Build
+        run: |
+          cp third_party/ffmpeg/ffmpeg.exe.sha256 committed.sha256 || true
+          ./third_party/ffmpeg/build-ffmpeg.sh
+          echo "仓库里的：$(cat committed.sha256 2>/dev/null)"
+          echo "这次编的：$(cat third_party/ffmpeg/ffmpeg.exe.sha256)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-lgpl-win64
+          path: |
+            third_party/ffmpeg/ffmpeg.exe.gz
+            third_party/ffmpeg/ffmpeg.exe.sha256

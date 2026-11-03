@@ -415,7 +415,7 @@
       </details>
       <details>
         <summary>哪些格式能看缩略图？</summary>
-        <p>JPG、PNG、GIF、BMP、TIFF、WebP、HEIC 直接解码；PSD、AI、PDF、INDD 优先读文件里存的预览图，没有就交给 Windows 的预览组件；视频和 Office 文件走 Windows 缩略图。PSD 想要缩略图快，Photoshop 里“首选项 → 文件处理 → 图像预览”要设成“总是存储”。</p>
+        <p>JPG、PNG、GIF、BMP、TIFF、WebP、HEIC 直接解码；PSD、AI、PDF、INDD 优先读内嵌预览，没有就交给 Windows。v1.13.0 的视频优先由自带 FFmpeg 取第一帧，黑场时再取 1.5 秒处，并绕过旧的失败标记；支持的文件可显示 720/1280 像素画面，取不到时回退 Windows。视频不能在预览里播放，AV1 仍依赖 Windows。设置 → 缩略图中可看取帧统计和失败原因，日志只存本机。</p>
       </details>
       <details>
         <summary>我的数据存在哪？怎么清掉？</summary>

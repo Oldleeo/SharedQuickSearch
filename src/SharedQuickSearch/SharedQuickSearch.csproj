@@ -17,7 +17,7 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <Version>1.12.0</Version>
+    <Version>1.13.0</Version>
     <AssemblyTitle>共享速搜</AssemblyTitle>
     <Product>共享速搜</Product>
     <Company>@老李Oldlee</Company>
@@ -31,6 +31,8 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\pinyin.dat" LogicalName="pinyin.dat" />
+    <!-- 自带的精简版 ffmpeg（视频取帧用，见 third_party/ffmpeg）。没有这个文件也能编译，视频就照旧交给 Windows 生成。 -->
+    <EmbeddedResource Include="..\..\third_party\ffmpeg\ffmpeg.exe.gz" LogicalName="ffmpeg.exe.gz" Condition="Exists('..\..\third_party\ffmpeg\ffmpeg.exe.gz')" />
     <Resource Include="Assets\共享速搜.ico" />
     <Resource Include="Assets\共享速搜-icon.png" />
     <Resource Include="Assets\老李Oldlee-头像.png" />

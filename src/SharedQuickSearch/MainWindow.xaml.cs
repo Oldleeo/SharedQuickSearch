@@ -443,7 +443,9 @@ public partial class MainWindow : Window
             ? "新增：全组共用缓存（自动找共享盘上的 .共享速搜缓存）、双击 Ctrl 呼出（设置里打开）。收集栏现在退出后也会保留。"
             : UpdateRules.Compare(fromVersion, "1.12.0") < 0
                 ? "全组共用缓存现在默认开着，会自动在共享盘上找；扫好的索引也会共享，新同事装好几秒就能搜。"
-                : $"按 {SettingsData.GlobalHotkey} 呼出。设置 → 关于 里可以看到更新状态。";
+                : UpdateRules.Compare(fromVersion, "1.13.0") < 0
+                    ? "视频预览图现在由软件自己取帧，出图快很多，MOV、MKV、手机拍的 HEVC 也能出；空格预览能看大画面。"
+                    : $"按 {SettingsData.GlobalHotkey} 呼出。设置 → 关于 里可以看到更新状态。";
         Dispatcher.InvokeAsync(() =>
         {
             try { _trayIcon?.ShowBalloonTip(6000, $"共享速搜已更新到 {UpdateService.CurrentVersion}", news, Forms.ToolTipIcon.None); }
