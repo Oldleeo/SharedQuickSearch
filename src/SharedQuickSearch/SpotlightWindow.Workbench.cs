@@ -557,6 +557,8 @@ public partial class SpotlightWindow
         {
             if (FileTypes.Images.Contains(entry.Extension))
                 image = (await _host.Thumbnails.LoadPreviewImageAsync(entry.FullPath, 900, cancellation.Token)).Image;
+            else if (VideoFrameExtractor.Supports(entry.Extension))
+                image = await _host.Thumbnails.LoadVideoPreviewAsync(entry.FullPath, 720, cancellation.Token);
             image ??= await _host.Thumbnails.LoadShellPreviewAsync(entry.FullPath, 512, cancellation.Token);
         }
         catch (OperationCanceledException) { return; }

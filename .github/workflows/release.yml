@@ -44,6 +44,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
+          # Verify the draft before promotion; latest/download must never expose a partially replaced asset set.
+          draft: true
           files: |
             installer/SharedQuickSearch-Setup.exe
             installer/SharedQuickSearch-Portable.exe

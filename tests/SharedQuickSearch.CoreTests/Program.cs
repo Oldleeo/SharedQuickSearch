@@ -248,6 +248,76 @@ try
 }
 finally { try { File.Delete(bigIndex); } catch { } }
 
+// ================= 视频取帧（自带 ffmpeg） =================
+{
+    var ffArgs = VideoFrameExtractor.BuildArguments(@"\\NAS\设计部\FA08-1 主图 (1).mp4", 256, 0, limitProbe: true);
+    Check("视频：路径整个作为一个参数（空格、中文、括号都不拆）", ffArgs.Contains(@"\\NAS\设计部\FA08-1 主图 (1).mp4") && ffArgs[ffArgs.ToList().IndexOf("-i") + 1] == @"\\NAS\设计部\FA08-1 主图 (1).mp4");
+    Check("视频：取第一帧时不跳转、限制探测量", !ffArgs.Contains("-ss") && ffArgs.Contains("-probesize") && ffArgs.Contains("pipe:1"));
+    var later = VideoFrameExtractor.BuildArguments("a.mp4", 256, 1.5, limitProbe: false).ToList();
+    Check("视频：黑场重取时跳到 1.5 秒（在 -i 前面，按关键帧快速定位）", later.IndexOf("-ss") >= 0 && later.IndexOf("-ss") < later.IndexOf("-i") && later[later.IndexOf("-ss") + 1] == "1.5" && !later.Contains("-probesize"));
+
+    byte[] Bmp(int w, int h, Func<int, int, byte> value)
+    {
+        var stride = (w * 3 + 3) & ~3;
+        var data = new byte[54 + stride * h];
+        data[0] = (byte)'B'; data[1] = (byte)'M';
+        BitConverter.GetBytes(data.Length).CopyTo(data, 2);
+        BitConverter.GetBytes(54).CopyTo(data, 10);
+        BitConverter.GetBytes(40).CopyTo(data, 14);
+        BitConverter.GetBytes(w).CopyTo(data, 18);
+        BitConverter.GetBytes(h).CopyTo(data, 22);
+        BitConverter.GetBytes((short)1).CopyTo(data, 26);
+        BitConverter.GetBytes((short)24).CopyTo(data, 28);
+        for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) { var v = value(x, y); var p = 54 + y * stride + x * 3; data[p] = data[p + 1] = data[p + 2] = v; }
+        return data;
+    }
+    Check("视频：全黑帧认得出", VideoFrameExtractor.IsMostlyDark(Bmp(256, 144, (_, _) => 4)));
+    Check("视频：正常画面不算黑", !VideoFrameExtractor.IsMostlyDark(Bmp(256, 144, (x, _) => (byte)(x % 256))));
+    Check("视频：暗调但有内容的画面不算黑", !VideoFrameExtractor.IsMostlyDark(Bmp(255, 143, (_, y) => (byte)(y < 72 ? 10 : 60))));
+    Check("视频：不是 BMP 的数据不当成黑", !VideoFrameExtractor.IsMostlyDark(new byte[100]));
+
+    // 端到端：设了 SQS_TEST_FFMPEG（本机编好的 ffmpeg）和 SQS_TEST_VIDEOS（测试视频文件夹）时才跑
+    var ffmpeg = Environment.GetEnvironmentVariable("SQS_TEST_FFMPEG");
+    var videos = Environment.GetEnvironmentVariable("SQS_TEST_VIDEOS");
+    if (!string.IsNullOrEmpty(ffmpeg) && Directory.Exists(videos))
+    {
+        VideoFrameExtractor.OverridePath = ffmpeg;
+        foreach (var file in Directory.GetFiles(videos).Where(f => VideoFrameExtractor.Supports(Path.GetExtension(f))).OrderBy(f => f))
+        {
+            var watch = Stopwatch.StartNew();
+            var bmp = await VideoFrameExtractor.ExtractAsync(file, 256, background: false, CancellationToken.None);
+            var w = bmp is null ? 0 : BitConverter.ToInt32(bmp, 18);
+            var h = bmp is null ? 0 : Math.Abs(BitConverter.ToInt32(bmp, 22));
+            var name = Path.GetFileName(file);
+            Check($"视频取帧：{name}", bmp is not null && Math.Max(w, h) <= 256 && !VideoFrameExtractor.IsMostlyDark(bmp),
+                $"{w}x{h}, {watch.ElapsedMilliseconds} ms");
+            if (name.Contains("rotate90")) Check($"视频取帧：{name} 竖拍的转正了（高大于宽）", h > w, $"{w}x{h}");
+        }
+        var missing = await VideoFrameExtractor.ExtractAsync(Path.Combine(videos!, "不存在.mp4"), 256, false, CancellationToken.None);
+        Check("视频取帧：文件不存在时返回空，不抛异常", missing is null);
+        VideoFrameExtractor.OverridePath = null;
+    }
+    else Console.WriteLine("INFO  没有设置 SQS_TEST_FFMPEG / SQS_TEST_VIDEOS，跳过视频端到端测试");
+
+    // 卡死测试：SQS_TEST_HANG 指向一个“启动后一直不输出也不退出”的假 ffmpeg（比如 sleep 300 的脚本）
+    var hang = Environment.GetEnvironmentVariable("SQS_TEST_HANG");
+    if (!string.IsNullOrEmpty(hang) && File.Exists(hang))
+    {
+        VideoFrameExtractor.OverridePath = hang;
+        var watch = Stopwatch.StartNew();
+        var stuck = await VideoFrameExtractor.ExtractAsync("whatever.mp4", 256, false, CancellationToken.None);
+        Check("视频取帧：ffmpeg 卡住时 20 秒超时后返回，不重试", stuck is null && watch.Elapsed < TimeSpan.FromSeconds(24), $"{watch.Elapsed.TotalSeconds:F1} s");
+
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        watch.Restart();
+        var cancelled = false;
+        try { await VideoFrameExtractor.ExtractAsync("whatever.mp4", 256, false, cancel.Token); }
+        catch (OperationCanceledException) { cancelled = true; }
+        Check("视频取帧：调用方取消时 2 秒左右就停（滚走了、关掉预览）", cancelled && watch.Elapsed < TimeSpan.FromSeconds(5), $"{watch.Elapsed.TotalSeconds:F1} s");
+        VideoFrameExtractor.OverridePath = null;
+    }
+}
+
 // ================= 全组缓存：路径统一、自动找文件夹、共享索引 =================
 {
     Check("路径：共享根目录", UncPaths.ShareRoot(@"\\NAS\设计部\产品图\2026") == @"\\NAS\设计部" && UncPaths.ShareRoot(@"C:\设计部") is null);

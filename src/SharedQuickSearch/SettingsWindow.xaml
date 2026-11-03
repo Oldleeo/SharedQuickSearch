@@ -77,7 +77,7 @@
                         <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE946;" Margin="0,0,12,0"/><TextBlock Text="关于"/></StackPanel>
                     </RadioButton>
                 </StackPanel>
-                <TextBlock x:Name="NavVersionText" Text="版本 1.12.0" Style="{StaticResource Caption}" VerticalAlignment="Bottom" Margin="28,0,0,18"/>
+                <TextBlock x:Name="NavVersionText" Text="版本 1.13.0" Style="{StaticResource Caption}" VerticalAlignment="Bottom" Margin="28,0,0,18"/>
             </Grid>
 
             <!-- ============ 右侧内容 ============ -->
@@ -343,6 +343,11 @@
                                         <StackPanel><TextBlock x:Name="StatPrefetch" Text="—" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="后台预热进度" Style="{StaticResource Caption}"/></StackPanel>
                                         <StackPanel><TextBlock x:Name="StatTeam" Text="—" FontFamily="{StaticResource DisplayFont}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="全组缓存命中 / 写入" Style="{StaticResource Caption}"/></StackPanel>
                                     </UniformGrid>
+                                    <Border Height="1" Background="{DynamicResource StrokeBrush}" Margin="0,12,0,10"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="视频取帧（自带 ffmpeg）" Style="{StaticResource Caption}" Margin="0,0,10,0"/>
+                                        <TextBlock x:Name="StatVideo" Text="—" Style="{StaticResource Caption}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -356,7 +361,7 @@
                                 </Border>
                                 <StackPanel Margin="18,0,0,0" VerticalAlignment="Center">
                                     <TextBlock Text="共享速搜" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="VersionText" Text="版本 1.12.0" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+                                    <TextBlock x:Name="VersionText" Text="版本 1.13.0" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </StackPanel>
                             <TextBlock Text="共享盘素材的本机索引、搜索和预览工具。为按 SKU 找图、找源文件的日常场景而做。" Style="{StaticResource SettingHint}" Margin="0,18,0,20"/>
@@ -424,6 +429,8 @@
                                     <Button Grid.Column="2" Content="查看教学" Click="Tutorial_Click"/>
                                 </Grid>
                             </Border>
+                            <TextBlock Style="{StaticResource Caption}" Margin="4,6,0,0" TextWrapping="Wrap"
+                                       Text="视频取帧用了 FFmpeg（LGPL 2.1+，官方 n7.1 源码，未修改；编译脚本和许可证见项目的 third_party/ffmpeg）。"/>
                         </StackPanel>
                     </Grid>
                 </ScrollViewer>

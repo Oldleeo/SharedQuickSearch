@@ -52,7 +52,7 @@ public partial class SettingsWindow : Window
         SpotlightCheck.IsChecked = _source.LaunchMode != "Window";
         ClipboardCheck.IsChecked = _source.ClipboardPrefill;
         HotkeyBox.Text = string.IsNullOrWhiteSpace(_source.GlobalHotkey) ? "Ctrl+Alt+Space" : _source.GlobalHotkey;
-        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.12.0");
+        var version = "版本 " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.13.0");
         VersionText.Text = version;
         NavVersionText.Text = version;
 
@@ -276,6 +276,8 @@ public partial class SettingsWindow : Window
         StatGenerated.Text = stats.Generated.ToString("N0");
         StatAverage.Text = stats.Disk + stats.WindowsCache + stats.Embedded + stats.Generated == 0 ? "—" : $"{stats.AverageMilliseconds:F0} ms";
         StatTeam.Text = _thumbnails.Team is null ? "未开启" : $"{stats.Team:N0} / {stats.TeamWrites:N0}";
+        StatVideo.Text = VideoFrameExtractor.Describe();
+        StatVideo.ToolTip = string.IsNullOrEmpty(VideoFrameExtractor.LastError) ? null : "最近一次失败：" + VideoFrameExtractor.LastError + "\n详细记录在 %AppData%\\Oldlee\\共享速搜\\video-frames.log";
         StatPrefetch.Text = stats.PrefetchTotal == 0 ? (stats.PrefetchRunning ? "准备中" : "—")
             : stats.PrefetchRunning ? $"{stats.PrefetchDone * 100.0 / stats.PrefetchTotal:F0}%" : $"{stats.PrefetchDone:N0} 张";
         CacheSizeText.Text = "正在统计…";
